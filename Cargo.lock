@@ -16,7 +16,7 @@ version = "0.1.0"
 dependencies = [
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "sys-info 0.5.10 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sys-info 0.5.10 (git+https://github.com/FillZpp/sys-info-rs.git)",
 ]
 
 [[package]]
@@ -35,7 +35,7 @@ dependencies = [
 [[package]]
 name = "sys-info"
 version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/FillZpp/sys-info-rs.git#16b3e13684aa51b2fd84769f482781a7b6395738"
 dependencies = [
  "cc 1.0.50 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -46,4 +46,4 @@ dependencies = [
 "checksum cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)" = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 "checksum libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)" = "eb147597cdf94ed43ab7a9038716637d2d1bf2bc571da995d0028dec06bd3018"
 "checksum log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)" = "14b6052be84e6b71ab17edffc2eeabf5c2c3ae1fdb464aae35ac50c67a44e1f7"
-"checksum sys-info 0.5.10 (registry+https://github.com/rust-lang/crates.io-index)" = "58283a48c9212afcade2069f8bbf7ded6a7bdbf4888d2defba72244c8e5f423c"
+"checksum sys-info 0.5.10 (git+https://github.com/FillZpp/sys-info-rs.git)" = "<none>"

@@ -9,8 +9,6 @@ use std::io::Write;
 use std::sync::Mutex;
 use std::env;
 use std::env::split_paths;
-use libc::{access, R_OK};
-use std::os::unix::ffi::OsStrExt;
 use std::ffi::{CString};
 use std::borrow::Borrow;
 
@@ -184,10 +182,14 @@ fn env_as_iter(value: String) -> Vec<String> {
 
 // Force OpenJDK-based JVMs to use /dev/urandom for random number generation
 // See https://github.com/jruby/jruby/issues/4685 among others.
+#[cfg(target_os="unix")]
 fn check_urandom(options: &mut LaunchOptions) {
-    unsafe {
-        let path = CString::new(Path::new("/dev/urandom").as_os_str().as_bytes()).unwrap();
+    use libc::{access, R_OK};
+    use std::os::unix::ffi::OsStrExt;
 
+    let path = CString::new(Path::new("/dev/urandom").as_os_str().as_bytes()).unwrap();
+
+    unsafe {
         // OpenJDK tries really hard to prevent you from using urandom.
         // See https://bugs.openjdk.java.net/browse/JDK-6202721
         // Non-file URL causes fallback to slow threaded SeedGenerator.
@@ -215,7 +217,7 @@ fn parse_os(options: &mut LaunchOptions) {
 }
 
 #[cfg(target_os="windows")]
-fn parse_os(options: LaunchOptions) {
+fn parse_os(options: &mut LaunchOptions) {
     // no checks
 }
 
@@ -252,29 +254,17 @@ fn prepare_options(options: &LaunchOptions) {
 
     // FIXME: I believe else path will also work on windows so no more hard-coding
     let mut ffi_option = "-Djffi.boot.library.path=".to_string();
-    if cfg!(target_os = "windows") {
-        ffi_option.push_str(jni_dir.to_str().unwrap());
-        ffi_option.push_str(";");
-        let mut path = jni_dir.clone();
-        path.push("i386-Windows");
-        ffi_option.push_str(path.to_str().unwrap());
-        ffi_option.push_str(";");
-        let mut path = jni_dir.clone();
-        path.push("x86_64-Windows");
-        ffi_option.push_str(path.to_str().unwrap());
-    } else {
-        let os_name = sys_info::os_type().unwrap();
+    let os_name = sys_info::os_type().unwrap();
 
-        println!("SYSINFO: {} {}", sys_info::os_release().unwrap(), os_name);
+    println!("SYSINFO: {} {}", sys_info::os_release().expect("Whoa need to handle this without dying"), os_name);
 
-        for entry in fs::read_dir(jni_dir).unwrap().into_iter() {
-            let entry = entry.unwrap();
+    for entry in fs::read_dir(jni_dir).unwrap().into_iter() {
+        let entry = entry.unwrap();
 
-            if entry.path().to_str().unwrap().contains(&os_name) {
-                println!("FOUND!!!!");
-            }
-            println!("ENTRY: {:?}", entry);
+        if entry.path().to_str().unwrap().contains(&os_name) {
+            println!("FOUND!!!!");
         }
+        println!("ENTRY: {:?}", entry);
     }
 }
 

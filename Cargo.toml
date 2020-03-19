@@ -15,4 +15,4 @@ panic = 'abort'
 [dependencies]
 log = { version = "0.4.5", features = ["std"] }
 libc = "0.2.67"
-sys-info = "0.5.10"
+sys-info = {version = "0.5.10", git = "https://github.com/FillZpp/sys-info-rs.git" }
