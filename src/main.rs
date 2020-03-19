@@ -1,5 +1,5 @@
 extern crate log;
-extern crate uname;
+extern crate sys_info;
 
 use std::path::{PathBuf, Path};
 use std::fs;
@@ -263,27 +263,19 @@ fn prepare_options(options: &LaunchOptions) {
         path.push("x86_64-Windows");
         ffi_option.push_str(path.to_str().unwrap());
     } else {
-        // FIXME: old launcher adds all linux dirs as ffi dirs vs only the one which matches specific machine arch???
-        let info = uname::uname().unwrap();
-        let mut sysinfo = info.machine;
-        sysinfo.push_str("-");
-        sysinfo.push_str(info.sysname.as_str());
+        let os_name = sys_info::os_type().unwrap();
 
-        println!("SYSINFO: {}", sysinfo);
+        println!("SYSINFO: {} {}", sys_info::os_release().unwrap(), os_name);
+
         for entry in fs::read_dir(jni_dir).unwrap().into_iter() {
             let entry = entry.unwrap();
 
-            if entry.path().to_str().unwrap().contains(&sysinfo) {
+            if entry.path().to_str().unwrap().contains(&os_name) {
                 println!("FOUND!!!!");
             }
             println!("ENTRY: {:?}", entry);
         }
     }
-
-
-
-
-
 }
 
 #[cfg(target_os="macos")]

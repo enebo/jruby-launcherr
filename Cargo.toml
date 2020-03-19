@@ -15,4 +15,4 @@ panic = 'abort'
 [dependencies]
 log = { version = "0.4.5", features = ["std"] }
 libc = "0.2.67"
-uname = "0.1.1"
+sys-info = "0.5.10"
