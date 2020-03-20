@@ -3,43 +3,11 @@ extern crate sys_info;
 
 use std::path::{PathBuf, Path};
 use std::fs;
-use std::fs::{File, read_link};
-use log::{info, warn, error, Metadata, Level, Record, SetLoggerError, LevelFilter};
-use std::io::Write;
-use std::sync::Mutex;
+use log::{info, error};
 use std::env;
 use std::env::split_paths;
-use std::ffi::{CString};
-use std::borrow::Borrow;
 
-struct FileLogger {
-    file: Mutex<File>,
-}
-
-impl FileLogger {
-    pub fn init(path: &Path) -> Result<(), SetLoggerError> {
-        if path.exists() {
-            fs::remove_file(path).expect("Could not remove old log file");
-        }
-        let logger = FileLogger { file: Mutex::new(File::create(path).unwrap()) };
-        log::set_boxed_logger(Box::new(logger))
-            .map(|()| log::set_max_level(LevelFilter::Info))
-    }
-}
-
-impl log::Log for FileLogger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Info
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            write!(self.file.lock().unwrap(), "{}: {}", record.level(), record.args()).expect("Could not write to log file");
-        }
-    }
-
-    fn flush(&self) {}
-}
+pub mod file_logger;
 
 #[derive(Debug)]
 struct LaunchOptions {
@@ -144,7 +112,7 @@ fn main() {
     let mut options = parse(env::args().collect()).ok().unwrap();
 
     if options.launcher_logfile.is_some() {
-        FileLogger::init(options.launcher_logfile.as_ref().unwrap()).expect("Unable to initialize logger");
+        file_logger::init(options.launcher_logfile.as_ref().unwrap()).expect("Unable to initialize logger");
     }
 
     init_platform_dir(&mut options);
