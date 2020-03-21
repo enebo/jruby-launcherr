@@ -3,6 +3,7 @@ use std::path::{PathBuf, Path};
 use std::{env, fs};
 use crate::file_helper::find_from_path;
 use crate::file_logger;
+use std::borrow::Borrow;
 
 pub struct LaunchError {
 }
@@ -11,11 +12,16 @@ pub fn new(args: Vec<String>) -> Result<LaunchOptions, LaunchError> {
     let mut options = LaunchOptions::default();
     options.parse(args);
 
-    println!("OPTS {:?}", options);
-
     if options.launcher_logfile.is_some() {
-        file_logger::init(options.launcher_logfile.as_ref().unwrap()).expect("Unable to initialize logger");
-    }
+        let path = options.launcher_logfile.as_ref().unwrap().to_str().unwrap();
+        let path = match path {
+            "__stdout__" => None,
+            _ => Some(PathBuf::from(path))
+        };
+        println!("LOG IS {:?}", path);
+
+        file_logger::init(path);
+    };
 
     options.determine_home();
     options.prepare_options();
@@ -29,9 +35,9 @@ pub struct LaunchOptions {
     command_only: bool,
     no_boot_classpath: bool,
     pub(crate) nailgun_client: bool,
-    pub(crate) launcher_logfile: Option<PathBuf>,
+    launcher_logfile: Option<PathBuf>,
     boot_class: Option<String>,
-    pub(crate) jdk_home: Option<PathBuf>,
+    jdk_home: Option<PathBuf>,
     classpath_before: Vec<PathBuf>,
     classpath_after: Vec<PathBuf>,
     classpath: Vec<PathBuf>,
@@ -41,6 +47,7 @@ pub struct LaunchOptions {
     jruby_opts: Vec<String>,
     platform_dir: Option<PathBuf>,
     argv0: String,
+    java_location: Option<PathBuf>,
 }
 
 macro_rules! arg_value {
@@ -89,7 +96,6 @@ impl LaunchOptions {
                 // launcher specific -X self...
                 "-Xfork-java" => self.fork_java = true,
                 "-Xcommand" => self.command_only = true,
-                fdksdjkfjsdkl Add __stdout__ as optionfor trace
                 "-Xnobootclasspath" => self.no_boot_classpath = true,
                 "-Xtrace" => self.launcher_logfile = Some(PathBuf::from(arg_value!(args).unwrap())),
                 "-Xbootclass" => self.boot_class = arg_value!(args),
@@ -209,6 +215,21 @@ impl LaunchOptions {
         Ok(())
     }
 
+    fn determine_java_location(&mut self) -> Result<(), LaunchError> {
+        let java = if let Ok(cmd) = env::var("JAVACMD") {
+            Some(PathBuf::from(cmd))
+        } else if self.jdk_home.is_some() {
+            Some(PathBuf::from(self.jdk_home.as_ref().unwrap()).join("bin").join("java"))
+        } else if let Ok(home) = env::var("JAVA_HOME") {
+            Some(PathBuf::from(home).join("bin").join("java"))
+        } else {
+            find_from_path("java")
+        };
+
+        self.java_location = java;
+        Ok(())
+    }
+
     fn prepare_options(&self) -> Result<(), LaunchError> {
         let mut java_options: Vec<String> = vec![];
 
@@ -238,7 +259,7 @@ impl LaunchOptions {
         }
 
         // FIXME: I believe else path will also work on windows so no more hard-coding
-        let mut ffi_option = "-Djffi.boot.library.path=".to_string();
+        let _ffi_option = "-Djffi.boot.library.path=".to_string();
         let os_name = sys_info::os_type().unwrap();
 
         println!("SYSINFO: {} {}", sys_info::os_release().expect("Whoa need to handle this without dying"), os_name);
@@ -380,6 +401,7 @@ impl Default for LaunchOptions {
             jruby_opts: vec![],
             platform_dir: None,
             argv0: "".to_string(),
+            java_location: None,
         }
     }
 }
