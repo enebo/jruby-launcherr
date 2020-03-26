@@ -3,14 +3,16 @@ use std::path::{PathBuf, Path};
 use std::{env, fs};
 use crate::file_helper::find_from_path;
 use crate::file_logger;
-use std::borrow::Borrow;
 
+#[derive(Debug)]
 pub struct LaunchError {
+    message: String,
 }
 
 pub fn new(args: Vec<String>) -> Result<LaunchOptions, LaunchError> {
     let mut options = LaunchOptions::default();
-    options.parse(args);
+
+    options = options.parse(args)?;
 
     if options.launcher_logfile.is_some() {
         let path = options.launcher_logfile.as_ref().unwrap().to_str().unwrap();
@@ -20,11 +22,16 @@ pub fn new(args: Vec<String>) -> Result<LaunchOptions, LaunchError> {
         };
         println!("LOG IS {:?}", path);
 
-        file_logger::init(path);
+        let result = file_logger::init(path);
+        if result.is_err() {
+            panic!("PANICK LOCGGGG: {:?}", result)
+        }
+        result.ok();
     };
 
-    options.determine_home();
-    options.prepare_options();
+    options = options.determine_home()?;
+    options = options.determine_java_location()?;
+    options = options.prepare_options()?;
 
     Ok(options)
 }
@@ -55,13 +62,13 @@ macro_rules! arg_value {
         if $args.peek().is_some() {
             $args.next().to_owned()
         } else {
-            return Err(LaunchError {});
+            return Err(LaunchError { message: "no extra argument".to_string() });
         }
     }};
 }
 
 impl LaunchOptions {
-    pub fn parse(&mut self, args: Vec<String>) -> Result<(), LaunchError> {
+    pub fn parse(mut self, args: Vec<String>) -> Result<LaunchOptions, LaunchError> {
         if let Ok(java_opts) = env::var("JAVA_OPTS") {
             self.java_opts.extend(LaunchOptions::env_as_iter(java_opts))
         }
@@ -102,7 +109,7 @@ impl LaunchOptions {
                 "-Xjdkhome" => self.jdk_home = Some(PathBuf::from(arg_value!(args).unwrap())),
                 "-Xcp:p" => self.push_classpath_before(arg_value!(args).unwrap()),
                 "-Xcp:a" => self.push_classpath_after(arg_value!(args).unwrap()),
-                "-Xversion" => return Err(LaunchError{}), // FIXME: Should print out version of launcher and exit
+                "-Xversion" => return Err(LaunchError{ message: "need to fix -Xversion".to_string()}), // FIXME: Should print out version of launcher and exit
                 "-Xhelp" | "-X" => {
                     // FIXME: WOT
                     // print_to_console(help)
@@ -159,33 +166,36 @@ impl LaunchOptions {
         }
         println!("launch options = {:?}", self);
 
-        Ok(())
+        Ok(self)
     }
 
     /// What directory is the main application (e.g. jruby).
-    fn determine_home(&mut self) -> Result<(), LaunchError> {
-        info!("determine_home()");
+    fn determine_home(mut self) -> Result<LaunchOptions, LaunchError> {
+        info!("determining JRuby home");
 
         if let Ok(java_opts) = env::var("JRUBY_HOME") {
-            info!("JRUBY_HOME: {}", java_opts);
+            info!("Found JRUBY_HOME = '{}'", java_opts);
 
             let dir = PathBuf::from(java_opts);
-            if dir.join("bin").join("jruby").exists() {
-                info!("Success: Found bin/jruby within JRUBY_HOME");
+            let jruby_bin = dir.join("bin");
+            if jruby_bin.exists() {
+                info!("Success: Found bin directory within JRUBY_HOME");
 
                 self.platform_dir = Some(dir);
-                return Ok(())
+                return Ok(self)
+            } else {
+                info!("Cannot find bin within provided JRUBY_HOME {:?}", jruby_bin);
             }
         }
 
         if let Some(dir) = self.init_platform_dir_os() {
             info!("Success: Found from os magic!");
             self.platform_dir = Some(dir);
-            return Ok(())
+            return Ok(self)
         }
 
         let argv0 = Path::new(&self.argv0);
-        let mut dir: Option<PathBuf> = None;
+        let mut dir: Option<PathBuf>;
 
         if argv0.is_absolute() {
             info!("Found absolute path for argv0");
@@ -205,17 +215,17 @@ impl LaunchOptions {
 
         if !dir.as_ref().unwrap().exists() {
             error!("Failue: '{:?}' does not exist", dir);
-            return Err(LaunchError {});
+            return Err(LaunchError { message: "unable to find JRuby home".to_string()});
         }
 
         info!("Success found it: '{:?}'", dir);
         // FIXME: We can error here if we end with a path of "/jruby" (which would not sanely happen).
         let parent = dir.unwrap().parent().unwrap().to_path_buf().parent().unwrap().to_path_buf();
         self.platform_dir = Some(parent);
-        Ok(())
+        Ok(self)
     }
 
-    fn determine_java_location(&mut self) -> Result<(), LaunchError> {
+    fn determine_java_location(mut self) -> Result<LaunchOptions, LaunchError> {
         let java = if let Ok(cmd) = env::var("JAVACMD") {
             Some(PathBuf::from(cmd))
         } else if self.jdk_home.is_some() {
@@ -227,10 +237,10 @@ impl LaunchOptions {
         };
 
         self.java_location = java;
-        Ok(())
+        Ok(self)
     }
 
-    fn prepare_options(&self) -> Result<(), LaunchError> {
+    fn prepare_options(self) -> Result<LaunchOptions, LaunchError> {
         let mut java_options: Vec<String> = vec![];
 
         if self.jdk_home.is_some() {
@@ -254,7 +264,7 @@ impl LaunchOptions {
         if !jni_dir.exists() {
             jni_dir = platform_dir.clone().join("lib").join("native");
             if !jni_dir.exists() {
-                return Err(LaunchError {})
+                return Err(LaunchError { message: "unable to find JNI dir".to_string() })
             }
         }
 
@@ -273,7 +283,7 @@ impl LaunchOptions {
             println!("ENTRY: {:?}", entry);
         }
 
-        Ok(())
+        Ok(self)
     }
 
     #[cfg(target_os="macos")]
@@ -370,10 +380,6 @@ impl LaunchOptions {
 
     fn push_classpath_after(&mut self, value: String) {
         self.classpath_after.push(PathBuf::from(value));
-    }
-
-    fn push_jruby_opts_arg(&mut self, value: String) {
-        self.jruby_opts.push(value.to_string());
     }
 
     fn push_java_opts_arg(&mut self, value: String) {

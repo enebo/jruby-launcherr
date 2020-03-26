@@ -2,8 +2,8 @@ use std::sync::Mutex;
 use std::{fs, io};
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
-use log::{LevelFilter, Metadata, Level, Record, SetLoggerError};
+use std::path::PathBuf;
+use log::{LevelFilter, Metadata, Level, Record};
 
 pub fn init(path: Option<PathBuf>) -> Result<(), FileLoggerError> {
     FileLogger::init(path)
