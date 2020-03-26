@@ -6,13 +6,23 @@ pub mod file_helper;
 pub mod file_logger;
 
 use std::env;
+use std::error::Error;
+use std::io::{stderr, Write};
+
+fn print_error(mut err: &dyn Error) {
+    let _ = writeln!(stderr(), "error: {}", err);
+    while let Some(cause) = err.source() {
+        let _ = writeln!(stderr(), "caused by: {}", cause);
+        err = cause;
+    }
+}
 
 fn main() {
     let options = launch_options::new(env::args().collect());
 
-    if options.is_err() {
-        println!("Problem parsing options: {:?}", options);
-        panic!("Whoops");
+    if let Err(err) = options {
+        print_error(&err);
+        std::process::exit(1);
     }
 
     let mut options = options.unwrap();

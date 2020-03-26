@@ -3,10 +3,24 @@ use std::path::{PathBuf, Path};
 use std::{env, fs};
 use crate::file_helper::find_from_path;
 use crate::file_logger;
+use core::fmt;
+use std::fmt::Formatter;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LaunchError {
     message: String,
+}
+
+impl fmt::Display for LaunchError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Launch Options Error: {}", self.message)
+    }
+}
+
+impl std::error::Error for LaunchError {
+    fn description(&self) -> &str {
+        &self.message
+    }
 }
 
 pub fn new(args: Vec<String>) -> Result<LaunchOptions, LaunchError> {
