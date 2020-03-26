@@ -12,26 +12,15 @@ pub struct LaunchError {
 pub fn new(args: Vec<String>) -> Result<LaunchOptions, LaunchError> {
     let mut options = LaunchOptions::default();
 
-    options = options.parse(args)?;
+    options.parse(args)?;
 
     if options.launcher_logfile.is_some() {
-        let path = options.launcher_logfile.as_ref().unwrap().to_str().unwrap();
-        let path = match path {
-            "__stdout__" => None,
-            _ => Some(PathBuf::from(path))
-        };
-        println!("LOG IS {:?}", path);
-
-        let result = file_logger::init(path);
-        if result.is_err() {
-            panic!("PANICK LOCGGGG: {:?}", result)
-        }
-        result.ok();
+        options.setup_logging();
     };
 
-    options = options.determine_home()?;
-    options = options.determine_java_location()?;
-    options = options.prepare_options()?;
+    options.determine_home()?;
+    options.determine_java_location()?;
+    options.prepare_options()?;
 
     Ok(options)
 }
@@ -68,7 +57,7 @@ macro_rules! arg_value {
 }
 
 impl LaunchOptions {
-    pub fn parse(mut self, args: Vec<String>) -> Result<LaunchOptions, LaunchError> {
+    pub fn parse(&mut self, args: Vec<String>) -> Result<(), LaunchError> {
         if let Ok(java_opts) = env::var("JAVA_OPTS") {
             self.java_opts.extend(LaunchOptions::env_as_iter(java_opts))
         }
@@ -166,11 +155,11 @@ impl LaunchOptions {
         }
         println!("launch options = {:?}", self);
 
-        Ok(self)
+        Ok(())
     }
 
     /// What directory is the main application (e.g. jruby).
-    fn determine_home(mut self) -> Result<LaunchOptions, LaunchError> {
+    fn determine_home(&mut self) -> Result<(), LaunchError> {
         info!("determining JRuby home");
 
         if let Ok(java_opts) = env::var("JRUBY_HOME") {
@@ -182,7 +171,7 @@ impl LaunchOptions {
                 info!("Success: Found bin directory within JRUBY_HOME");
 
                 self.platform_dir = Some(dir);
-                return Ok(self)
+                return Ok(())
             } else {
                 info!("Cannot find bin within provided JRUBY_HOME {:?}", jruby_bin);
             }
@@ -191,7 +180,7 @@ impl LaunchOptions {
         if let Some(dir) = self.init_platform_dir_os() {
             info!("Success: Found from os magic!");
             self.platform_dir = Some(dir);
-            return Ok(self)
+            return Ok(())
         }
 
         let argv0 = Path::new(&self.argv0);
@@ -222,10 +211,10 @@ impl LaunchOptions {
         // FIXME: We can error here if we end with a path of "/jruby" (which would not sanely happen).
         let parent = dir.unwrap().parent().unwrap().to_path_buf().parent().unwrap().to_path_buf();
         self.platform_dir = Some(parent);
-        Ok(self)
+        Ok(())
     }
 
-    fn determine_java_location(mut self) -> Result<LaunchOptions, LaunchError> {
+    fn determine_java_location(&mut self) -> Result<(), LaunchError> {
         let java = if let Ok(cmd) = env::var("JAVACMD") {
             Some(PathBuf::from(cmd))
         } else if self.jdk_home.is_some() {
@@ -237,10 +226,10 @@ impl LaunchOptions {
         };
 
         self.java_location = java;
-        Ok(self)
+        Ok(())
     }
 
-    fn prepare_options(self) -> Result<LaunchOptions, LaunchError> {
+    fn prepare_options(&mut self) -> Result<(), LaunchError> {
         let mut java_options: Vec<String> = vec![];
 
         if self.jdk_home.is_some() {
@@ -283,7 +272,22 @@ impl LaunchOptions {
             println!("ENTRY: {:?}", entry);
         }
 
-        Ok(self)
+        Ok(())
+    }
+
+    // Note: Assumes launcher_logfile is Some.
+    fn setup_logging(&mut self) {
+        let path = self.launcher_logfile.as_ref().unwrap().to_str().unwrap();
+        let path = match path {
+            "__stdout__" => None,
+            _ => Some(PathBuf::from(path))
+        };
+        println!("LOG IS {:?}", path);
+        let result = file_logger::init(path);
+        if result.is_err() {
+            panic!("PANICK LOCGGGG: {:?}", result)
+        }
+        result.ok();
     }
 
     #[cfg(target_os="macos")]
