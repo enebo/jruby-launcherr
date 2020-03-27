@@ -328,7 +328,7 @@ impl LaunchOptions {
         }
     }
 
-    #[cfg(target_os="linux")]
+    #[cfg(any(unix))]
     fn init_platform_dir_os(&mut self) -> Option<PathBuf> {
         use std::fs::read_link;
         if let Ok(path) = read_link(Path::new("/proc/self/exe")) {
@@ -358,7 +358,7 @@ impl LaunchOptions {
         check_urandom(options)
     }
 
-    #[cfg(target_os="linux")]
+    #[cfg(any(unix))]
     fn parse_os(&mut self) {
         self.check_urandom()
     }
@@ -370,7 +370,7 @@ impl LaunchOptions {
 
     // Force OpenJDK-based JVMs to use /dev/urandom for random number generation
     // See https://github.com/jruby/jruby/issues/4685 among others.
-    #[cfg(target_os="linux")]
+    #[cfg(any(unix))]
     fn check_urandom(&mut self) {
         use libc::{access, R_OK};
         use std::ffi::CString;
