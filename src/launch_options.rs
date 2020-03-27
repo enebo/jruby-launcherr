@@ -5,6 +5,7 @@ use crate::file_helper::find_from_path;
 use crate::file_logger;
 use core::fmt;
 use std::fmt::Formatter;
+use std::error::Error;
 
 #[derive(Debug, Clone)]
 pub struct LaunchError {
@@ -23,7 +24,7 @@ impl std::error::Error for LaunchError {
     }
 }
 
-pub fn new(args: Vec<String>) -> Result<LaunchOptions, LaunchError> {
+pub fn new(args: Vec<String>) -> Result<LaunchOptions, Box<dyn Error>> {
     let mut options = LaunchOptions::default();
 
     options.parse(args)?;
@@ -63,15 +64,15 @@ pub struct LaunchOptions {
 macro_rules! arg_value {
     ($args:expr) => {{
         if $args.peek().is_some() {
-            $args.next().to_owned()
+            $args.next().to_owned().unwrap()
         } else {
-            return Err(LaunchError { message: "no extra argument".to_string() });
+            return Err(Box::new(LaunchError { message: "no extra argument".to_string() }));
         }
     }};
 }
 
 impl LaunchOptions {
-    pub fn parse(&mut self, args: Vec<String>) -> Result<(), LaunchError> {
+    pub fn parse(&mut self, args: Vec<String>) -> Result<(), Box<dyn Error>> {
         if let Ok(java_opts) = env::var("JAVA_OPTS") {
             self.java_opts.extend(LaunchOptions::env_as_iter(java_opts))
         }
@@ -92,7 +93,7 @@ impl LaunchOptions {
 
         let mut args = args.into_iter().peekable();
 
-        self.argv0 = args.next().unwrap(); // exe
+        self.argv0 = args.next().expect("Impossible to not have argv0");
 
         while let Some(argument) = args.next() {
             println!("ARG: {}", argument);
@@ -107,12 +108,12 @@ impl LaunchOptions {
                 "-Xfork-java" => self.fork_java = true,
                 "-Xcommand" => self.command_only = true,
                 "-Xnobootclasspath" => self.no_boot_classpath = true,
-                "-Xtrace" => self.launcher_logfile = Some(PathBuf::from(arg_value!(args).unwrap())),
-                "-Xbootclass" => self.boot_class = arg_value!(args),
-                "-Xjdkhome" => self.jdk_home = Some(PathBuf::from(arg_value!(args).unwrap())),
-                "-Xcp:p" => self.push_classpath_before(arg_value!(args).unwrap()),
-                "-Xcp:a" => self.push_classpath_after(arg_value!(args).unwrap()),
-                "-Xversion" => return Err(LaunchError{ message: "need to fix -Xversion".to_string()}), // FIXME: Should print out version of launcher and exit
+                "-Xtrace" => self.launcher_logfile = Some(PathBuf::from(arg_value!(args))),
+                "-Xbootclass" => self.boot_class = Some(arg_value!(args)),
+                "-Xjdkhome" => self.jdk_home = Some(PathBuf::from(arg_value!(args))),
+                "-Xcp:p" => self.push_classpath_before(arg_value!(args)),
+                "-Xcp:a" => self.push_classpath_after(arg_value!(args)),
+                "-Xversion" => return Err(Box::new(LaunchError{ message: "need to fix -Xversion".to_string()})),
                 "-Xhelp" | "-X" => {
                     // FIXME: WOT
                     // print_to_console(help)
@@ -124,7 +125,7 @@ impl LaunchOptions {
                 // java options we need to pass to java process itself if we see them
                 "-J-cp" | "-J-classpath" => self
                     .classpath
-                    .push(PathBuf::from(arg_value!(args).unwrap())),
+                    .push(PathBuf::from(arg_value!(args))),
                 "--server" => self.push_java_arg("-server"),
                 "--client" => self.push_java_arg("-client"),
                 "--dev" => {
@@ -153,8 +154,9 @@ impl LaunchOptions {
                 _ => {
                     if argument.len() > 2 {
                         let (two, rest) = argument.split_at(2);
+
                         match two {
-                            "-X" if rest.chars().next().unwrap().is_ascii_lowercase() => {
+                            "-X" if rest.chars().next().unwrap().is_ascii_lowercase() => { // unwrap safe 3+ chars at this point
                                 let property = "-Djruby.".to_string() + rest;
                                 self.push_java_arg(property.as_str())
                             }
@@ -173,7 +175,8 @@ impl LaunchOptions {
     }
 
     /// What directory is the main application (e.g. jruby).
-    fn determine_home(&mut self) -> Result<(), LaunchError> {
+    ///
+    fn determine_home(&mut self) -> Result<(), Box<dyn Error>> {
         info!("determining JRuby home");
 
         if let Ok(java_opts) = env::var("JRUBY_HOME") {
@@ -203,9 +206,9 @@ impl LaunchOptions {
         if argv0.is_absolute() {
             info!("Found absolute path for argv0");
             dir = Some(argv0.to_path_buf());
-        } else if argv0.parent().is_some() { // relative path (will contain / or \).
-            info!("Relative path argv0...combine with CWD");
-            dir = Some(env::current_dir().unwrap().join(argv0).to_path_buf());
+        } else if argv0.parent().is_some() && env::current_dir().is_ok()  { // relative path (will contain / or \).
+            info!("Relative path argv0...combine with CWD");  // FIXME: make cwd Option in LaunchOptions
+            dir = Some(env::current_dir()?.join(argv0).to_path_buf());
         } else {
             info!("Try and find argv0 within PATH env");
             dir = find_from_path(argv0.to_str().unwrap());
@@ -218,7 +221,7 @@ impl LaunchOptions {
 
         if !dir.as_ref().unwrap().exists() {
             error!("Failue: '{:?}' does not exist", dir);
-            return Err(LaunchError { message: "unable to find JRuby home".to_string()});
+            return Err(Box::new(LaunchError { message: "unable to find JRuby home".to_string()}));
         }
 
         info!("Success found it: '{:?}'", dir);
@@ -228,7 +231,7 @@ impl LaunchOptions {
         Ok(())
     }
 
-    fn determine_java_location(&mut self) -> Result<(), LaunchError> {
+    fn determine_java_location(&mut self) -> Result<(), Box<dyn Error>> {
         let java = if let Ok(cmd) = env::var("JAVACMD") {
             Some(PathBuf::from(cmd))
         } else if self.jdk_home.is_some() {
@@ -243,11 +246,11 @@ impl LaunchOptions {
         Ok(())
     }
 
-    fn prepare_options(&mut self) -> Result<(), LaunchError> {
+    fn prepare_options(&mut self) -> Result<(), Box<dyn Error>> {
         let mut java_options: Vec<String> = vec![];
 
-        if self.jdk_home.is_some() {
-            java_options.push("-Djdk.home=".to_string() + self.jdk_home.to_owned().unwrap().to_str().unwrap());
+        if let Some(jdk_home) = &self.jdk_home {
+            java_options.push("-Djdk.home=".to_string() + jdk_home.to_str().unwrap());
         }
 
         let platform_dir= self.platform_dir.to_owned().unwrap();
@@ -267,7 +270,7 @@ impl LaunchOptions {
         if !jni_dir.exists() {
             jni_dir = platform_dir.clone().join("lib").join("native");
             if !jni_dir.exists() {
-                return Err(LaunchError { message: "unable to find JNI dir".to_string() })
+                return Err(Box::new(LaunchError { message: "unable to find JNI dir".to_string() }))
             }
         }
 
