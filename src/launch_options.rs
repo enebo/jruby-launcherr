@@ -6,6 +6,7 @@ use crate::file_logger;
 use core::fmt;
 use std::fmt::Formatter;
 use std::error::Error;
+use std::ffi::OsString;
 
 #[derive(Debug, Clone)]
 pub struct LaunchError {
@@ -274,20 +275,23 @@ impl LaunchOptions {
             }
         }
 
-        // FIXME: I believe else path will also work on windows so no more hard-coding
-        let _ffi_option = "-Djffi.boot.library.path=".to_string();
+        let mut ffi_option = "-Djffi.boot.library.path=".to_string();
         let os_name = sys_info::os_type().unwrap();
+        let entries = fs::read_dir(jni_dir).unwrap().into_iter().filter_map(|entry| -> Option<PathBuf> {
+            let path = &entry.unwrap().path().to_str().unwrap().to_owned();
 
-        println!("SYSINFO: {} {}", sys_info::os_release().expect("Whoa need to handle this without dying"), os_name);
-
-        for entry in fs::read_dir(jni_dir).unwrap().into_iter() {
-            let entry = entry.unwrap();
-
-            if entry.path().to_str().unwrap().contains(&os_name) {
-                println!("FOUND!!!!");
+            if path.contains(&os_name) {
+                Some(PathBuf::from(path))
+            } else {
+                None
             }
-            println!("ENTRY: {:?}", entry);
+        });
+        let paths = env::join_paths(entries).unwrap_or(OsString::from(""));
+        if !paths.is_empty() {
+            ffi_option.push_str(paths.to_str().unwrap());
         }
+
+        println!("JNI DIR: {}", ffi_option);
 
         Ok(())
     }
