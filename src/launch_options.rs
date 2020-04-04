@@ -1,4 +1,4 @@
-use log::{info, error};
+use log::{info, warn, error};
 use std::path::{PathBuf, Path};
 use std::{env, fs};
 use crate::file_helper::find_from_path;
@@ -7,6 +7,20 @@ use core::fmt;
 use std::fmt::Formatter;
 use std::error::Error;
 use std::ffi::OsString;
+
+pub const XSS_DEFAULT: &str = "2048k";
+
+#[cfg(target_os="windows")]
+pub const JAVA_NAME: &str = "java.exe";
+
+#[cfg(target_os="windows")]
+pub const SHELL: &str = "cmd.exe";
+
+#[cfg(not(windows))]
+pub const JAVA_NAME: &str = "java";
+
+#[cfg(not(windows))]
+pub const SHELL: &str = "/bin/sh";
 
 #[derive(Debug, Clone)]
 pub struct LaunchError {
@@ -35,8 +49,11 @@ pub fn new(args: Vec<String>) -> Result<LaunchOptions, Box<dyn Error>> {
     };
 
     options.determine_home()?;
+    info!("launch_options = {:?}", options);
     options.determine_java_location()?;
+    info!("launch_options = {:?}", options);
     options.prepare_options()?;
+    info!("launch_options = {:?}", options);
 
     Ok(options)
 }
@@ -52,6 +69,7 @@ pub struct LaunchOptions {
     jdk_home: Option<PathBuf>,
     classpath_before: Vec<PathBuf>,
     classpath_after: Vec<PathBuf>,
+    classpath_explicit: Vec<PathBuf>, // What we passed explicitly to the launcher as a classpath.
     classpath: Vec<PathBuf>,
     java_args: Vec<String>, // Note: some other fields will also eventually be java args in final command-line.
     program_args: Vec<String>,
@@ -60,6 +78,9 @@ pub struct LaunchOptions {
     platform_dir: Option<PathBuf>,
     argv0: String,
     java_location: Option<PathBuf>,
+    xss: Option<String>,
+    use_module_path: bool,
+    boot_classpath: Vec<PathBuf>,
 }
 
 macro_rules! arg_value {
@@ -125,7 +146,7 @@ impl LaunchOptions {
                 "-Xproperties" => self.program_args.push("--properties".to_string()),
                 // java options we need to pass to java process itself if we see them
                 "-J-cp" | "-J-classpath" => self
-                    .classpath
+                    .classpath_explicit
                     .push(PathBuf::from(arg_value!(args))),
                 "--server" => self.push_java_arg("-server"),
                 "--client" => self.push_java_arg("-client"),
@@ -157,6 +178,7 @@ impl LaunchOptions {
                         let (two, rest) = argument.split_at(2);
 
                         match two {
+                            "-X" if rest.starts_with("xss") => self.xss = Some(argument),
                             "-X" if rest.chars().next().unwrap().is_ascii_lowercase() => { // unwrap safe 3+ chars at this point
                                 let property = "-Djruby.".to_string() + rest;
                                 self.push_java_arg(property.as_str())
@@ -234,13 +256,17 @@ impl LaunchOptions {
 
     fn determine_java_location(&mut self) -> Result<(), Box<dyn Error>> {
         let java = if let Ok(cmd) = env::var("JAVACMD") {
+            info!("Found JAVACMD");
             Some(PathBuf::from(cmd))
         } else if self.jdk_home.is_some() {
-            Some(PathBuf::from(self.jdk_home.as_ref().unwrap()).join("bin").join("java"))
+            info!("-Xjdkhome was specified");
+            Some(PathBuf::from(self.jdk_home.as_ref().unwrap()).join("bin").join(JAVA_NAME))
         } else if let Ok(home) = env::var("JAVA_HOME") {
-            Some(PathBuf::from(home).join("bin").join("java"))
+            info!("Deriving from JAVA_HOME");
+            Some(PathBuf::from(home).join("bin").join(JAVA_NAME))
         } else {
-            find_from_path("java")
+            info!("Trying to find java command on Path");
+            find_from_path(JAVA_NAME)
         };
 
         self.java_location = java;
@@ -258,12 +284,7 @@ impl LaunchOptions {
 
         java_options.push("-Djruby.home=".to_string() + platform_dir.to_str().unwrap());
         java_options.push("-Djruby.script=jruby".to_string());
-
-        if cfg!(target_os = "windows") {
-            java_options.push("-Djruby.shell=cmd.exe".to_string());
-        } else {
-            java_options.push("-Djruby.shell=/bin/sh".to_string());
-        }
+        java_options.push("-Djruby.shell=".to_string() + SHELL);
 
         let mut jni_dir = platform_dir.clone().join("lib").join("jni");
 
@@ -275,7 +296,6 @@ impl LaunchOptions {
             }
         }
 
-        let mut ffi_option = "-Djffi.boot.library.path=".to_string();
         let os_name = sys_info::os_type().unwrap();
         let entries = fs::read_dir(jni_dir).unwrap().into_iter().filter_map(|entry| -> Option<PathBuf> {
             let path = &entry.unwrap().path().to_str().unwrap().to_owned();
@@ -288,12 +308,116 @@ impl LaunchOptions {
         });
         let paths = env::join_paths(entries).unwrap_or(OsString::from(""));
         if !paths.is_empty() {
-            ffi_option.push_str(paths.to_str().unwrap());
+            println!("found paths: {}", paths.to_str().unwrap());
+            java_options.push("-Djffi.boot.library.path=".to_string() + paths.to_str().unwrap());
         }
 
-        println!("JNI DIR: {}", ffi_option);
+        if self.xss.is_none() {
+            info!("No explicit xss. Defaulting to: {}", XSS_DEFAULT);
+            java_options.push("-Xss".to_string() + XSS_DEFAULT); // FIXME: put size in const
+        }
+
+        if self.jdk_home.is_none() {
+            info!("No Java home detected.  Cannot check for JPMS.");
+        } else {
+            let jmods = PathBuf::from(self.jdk_home.as_ref().unwrap().to_str().unwrap()).join("jmods");
+
+            if jmods.exists() {
+                info!("jmods directory found in Java home.  Set up module support");
+                self.use_module_path = true;
+            }
+        }
+        println!("JAVA_OPTS = {:?}", java_options);
+
+        // construct_boot_classpath
+        let jruby_complete_jar = PathBuf::from(&platform_dir).join("lib").join("jruby-complete.jar");
+        let jruby_jar = PathBuf::from(&platform_dir).join("lib").join("jruby.jar");
+
+        if jruby_jar.exists() {
+            self.add_to_boot_class_path(jruby_jar, true);
+            if jruby_complete_jar.exists() {
+                warn!("Both jruby.jar and jruby-complete.jar are present.  Using jruby.jar");
+            }
+        } else if jruby_complete_jar.exists() {
+            self.add_to_boot_class_path(jruby_complete_jar, false);
+        } else {
+            warn!("No jruby.jar or jruby-complete.jar found.")
+            // not in original launcher (maybe verify via CLASSPATH and other potential places they could be set?
+        }
+
+        // construct_classpath
+        self.add_jars_to_classpath();
+
+        if self.classpath_explicit.is_empty() {
+            info!("No explicit classpath passed in....Gettting from ENV");
+            if let Some(classpath) = env::var_os("CLASSPATH") {
+                self.classpath.extend(env::split_paths(&classpath));
+            }
+        } else {
+            info!("Explicit classpath..ignoring ENV");
+            self.classpath.extend(self.classpath_explicit.to_owned());
+        }
+
+        if !self.classpath_after.is_empty() {
+            self.classpath.extend(self.classpath_after.to_owned());
+        }
+
 
         Ok(())
+    }
+
+    fn add_jars_to_classpath(&mut self) {
+        let lib_dir= self.platform_dir.clone().unwrap().join("lib");
+
+        if !lib_dir.is_dir() {
+            // FIXME: This should full on abort
+            error!("{:?} is not a directory...skipping!", lib_dir);
+            return;
+        }
+
+        for entry in fs::read_dir(lib_dir).unwrap().into_iter() {
+            let path = &entry.unwrap().path().to_str().unwrap().to_owned();
+
+            if path.ends_with(".jar") {
+                self.classpath.push(PathBuf::from(path));
+            }
+        }
+    }
+
+    fn add_to_boot_class_path(&mut self, path: PathBuf, only_if_exists: bool) {
+        if self.no_boot_classpath {
+            info!("no boot classpath specified so adding to classpath instead");
+            self.add_to_class_path(path, only_if_exists);
+            return;
+        }
+
+        if only_if_exists && !path.exists() {
+            return;
+        }
+
+        if self.boot_classpath.contains(&path) {
+            info!("{:?} already is within the boot classpath.  Skipping it.", path);
+        } else {
+            self.boot_classpath.push(path);
+        }
+    }
+
+    fn add_to_class_path(&mut self, path: PathBuf, only_if_exists: bool) {
+        if only_if_exists && !path.exists() {
+            return;
+        }
+
+        if self.classpath.contains(&path) {
+            info!("{:?} already is within classpath.  Skipping it.", path);
+            return;
+        }
+
+        if self.boot_classpath.contains(&path) {
+            info!("{:?} already is within the boot classpath.  Not adding to classpath.", path);
+            return;
+        } else {
+            self.classpath.push(path);
+        }
     }
 
     // Note: Assumes launcher_logfile is Some.
@@ -432,6 +556,7 @@ impl Default for LaunchOptions {
             classpath_before: vec![],
             classpath_after: vec![],
             classpath: vec![],
+            classpath_explicit: vec![],
             java_args: vec![],
             program_args: vec![],
             java_opts: vec![],
@@ -439,6 +564,9 @@ impl Default for LaunchOptions {
             platform_dir: None,
             argv0: "".to_string(),
             java_location: None,
+            xss: None,
+            use_module_path: true,
+            boot_classpath: vec![],
         }
     }
 }
