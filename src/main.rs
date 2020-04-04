@@ -1,9 +1,9 @@
 extern crate log;
 extern crate sys_info;
 
-pub mod launch_options;
 pub mod file_helper;
 pub mod file_logger;
+pub mod launch_options;
 
 use std::env;
 use std::error::Error;
@@ -32,7 +32,3 @@ fn main() {
         // FIXME: Add nailgun client support?
     }
 }
-
-
-
-

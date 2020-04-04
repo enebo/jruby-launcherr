@@ -1,19 +1,19 @@
-use log::{info, warn, error};
-use std::path::{PathBuf, Path};
-use std::{env, fs};
 use crate::file_helper::find_from_path;
 use crate::file_logger;
 use core::fmt;
-use std::fmt::Formatter;
+use log::{error, info, warn};
 use std::error::Error;
 use std::ffi::OsString;
+use std::fmt::Formatter;
+use std::path::{Path, PathBuf};
+use std::{env, fs};
 
 pub const XSS_DEFAULT: &str = "2048k";
 
-#[cfg(target_os="windows")]
+#[cfg(target_os = "windows")]
 pub const JAVA_NAME: &str = "java.exe";
 
-#[cfg(target_os="windows")]
+#[cfg(target_os = "windows")]
 pub const SHELL: &str = "cmd.exe";
 
 #[cfg(not(windows))]
@@ -88,7 +88,9 @@ macro_rules! arg_value {
         if $args.peek().is_some() {
             $args.next().to_owned().unwrap()
         } else {
-            return Err(Box::new(LaunchError { message: "no extra argument".to_string() }));
+            return Err(Box::new(LaunchError {
+                message: "no extra argument".to_string(),
+            }));
         }
     }};
 }
@@ -100,7 +102,8 @@ impl LaunchOptions {
         }
 
         if let Ok(jruby_opts) = env::var("JRUBY_OPTS") {
-            self.jruby_opts.extend(LaunchOptions::env_as_iter(jruby_opts))
+            self.jruby_opts
+                .extend(LaunchOptions::env_as_iter(jruby_opts))
         }
 
         self.parse_os();
@@ -135,7 +138,11 @@ impl LaunchOptions {
                 "-Xjdkhome" => self.jdk_home = Some(PathBuf::from(arg_value!(args))),
                 "-Xcp:p" => self.push_classpath_before(arg_value!(args)),
                 "-Xcp:a" => self.push_classpath_after(arg_value!(args)),
-                "-Xversion" => return Err(Box::new(LaunchError{ message: "need to fix -Xversion".to_string()})),
+                "-Xversion" => {
+                    return Err(Box::new(LaunchError {
+                        message: "need to fix -Xversion".to_string(),
+                    }))
+                }
                 "-Xhelp" | "-X" => {
                     // FIXME: WOT
                     // print_to_console(help)
@@ -179,7 +186,8 @@ impl LaunchOptions {
 
                         match two {
                             "-X" if rest.starts_with("xss") => self.xss = Some(argument),
-                            "-X" if rest.chars().next().unwrap().is_ascii_lowercase() => { // unwrap safe 3+ chars at this point
+                            "-X" if rest.chars().next().unwrap().is_ascii_lowercase() => {
+                                // unwrap safe 3+ chars at this point
                                 let property = "-Djruby.".to_string() + rest;
                                 self.push_java_arg(property.as_str())
                             }
@@ -211,7 +219,7 @@ impl LaunchOptions {
                 info!("Success: Found bin directory within JRUBY_HOME");
 
                 self.platform_dir = Some(dir);
-                return Ok(())
+                return Ok(());
             } else {
                 info!("Cannot find bin within provided JRUBY_HOME {:?}", jruby_bin);
             }
@@ -220,7 +228,7 @@ impl LaunchOptions {
         if let Some(dir) = self.init_platform_dir_os() {
             info!("Success: Found from os magic!");
             self.platform_dir = Some(dir);
-            return Ok(())
+            return Ok(());
         }
 
         let argv0 = Path::new(&self.argv0);
@@ -229,27 +237,38 @@ impl LaunchOptions {
         if argv0.is_absolute() {
             info!("Found absolute path for argv0");
             dir = Some(argv0.to_path_buf());
-        } else if argv0.parent().is_some() && env::current_dir().is_ok()  { // relative path (will contain / or \).
-            info!("Relative path argv0...combine with CWD");  // FIXME: make cwd Option in LaunchOptions
+        } else if argv0.parent().is_some() && env::current_dir().is_ok() {
+            // relative path (will contain / or \).
+            info!("Relative path argv0...combine with CWD"); // FIXME: make cwd Option in LaunchOptions
             dir = Some(env::current_dir()?.join(argv0).to_path_buf());
         } else {
             info!("Try and find argv0 within PATH env");
             dir = find_from_path(argv0.to_str().unwrap());
         }
 
-        if dir.is_none() { // hail mary pass in argv[0].
+        if dir.is_none() {
+            // hail mary pass in argv[0].
             info!("Previous attempt failed...just leave argv0 as-is");
             dir = Some(argv0.to_path_buf());
         }
 
         if !dir.as_ref().unwrap().exists() {
             error!("Failue: '{:?}' does not exist", dir);
-            return Err(Box::new(LaunchError { message: "unable to find JRuby home".to_string()}));
+            return Err(Box::new(LaunchError {
+                message: "unable to find JRuby home".to_string(),
+            }));
         }
 
         info!("Success found it: '{:?}'", dir);
         // FIXME: We can error here if we end with a path of "/jruby" (which would not sanely happen).
-        let parent = dir.unwrap().parent().unwrap().to_path_buf().parent().unwrap().to_path_buf();
+        let parent = dir
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
+            .parent()
+            .unwrap()
+            .to_path_buf();
         self.platform_dir = Some(parent);
         Ok(())
     }
@@ -260,7 +279,11 @@ impl LaunchOptions {
             Some(PathBuf::from(cmd))
         } else if self.jdk_home.is_some() {
             info!("-Xjdkhome was specified");
-            Some(PathBuf::from(self.jdk_home.as_ref().unwrap()).join("bin").join(JAVA_NAME))
+            Some(
+                PathBuf::from(self.jdk_home.as_ref().unwrap())
+                    .join("bin")
+                    .join(JAVA_NAME),
+            )
         } else if let Ok(home) = env::var("JAVA_HOME") {
             info!("Deriving from JAVA_HOME");
             Some(PathBuf::from(home).join("bin").join(JAVA_NAME))
@@ -280,7 +303,7 @@ impl LaunchOptions {
             java_options.push("-Djdk.home=".to_string() + jdk_home.to_str().unwrap());
         }
 
-        let platform_dir= self.platform_dir.to_owned().unwrap();
+        let platform_dir = self.platform_dir.to_owned().unwrap();
 
         java_options.push("-Djruby.home=".to_string() + platform_dir.to_str().unwrap());
         java_options.push("-Djruby.script=jruby".to_string());
@@ -292,20 +315,26 @@ impl LaunchOptions {
         if !jni_dir.exists() {
             jni_dir = platform_dir.clone().join("lib").join("native");
             if !jni_dir.exists() {
-                return Err(Box::new(LaunchError { message: "unable to find JNI dir".to_string() }))
+                return Err(Box::new(LaunchError {
+                    message: "unable to find JNI dir".to_string(),
+                }));
             }
         }
 
         let os_name = sys_info::os_type().unwrap();
-        let entries = fs::read_dir(jni_dir).unwrap().into_iter().filter_map(|entry| -> Option<PathBuf> {
-            let path = &entry.unwrap().path().to_str().unwrap().to_owned();
+        let entries =
+            fs::read_dir(jni_dir)
+                .unwrap()
+                .into_iter()
+                .filter_map(|entry| -> Option<PathBuf> {
+                    let path = &entry.unwrap().path().to_str().unwrap().to_owned();
 
-            if path.contains(&os_name) {
-                Some(PathBuf::from(path))
-            } else {
-                None
-            }
-        });
+                    if path.contains(&os_name) {
+                        Some(PathBuf::from(path))
+                    } else {
+                        None
+                    }
+                });
         let paths = env::join_paths(entries).unwrap_or(OsString::from(""));
         if !paths.is_empty() {
             println!("found paths: {}", paths.to_str().unwrap());
@@ -320,7 +349,8 @@ impl LaunchOptions {
         if self.jdk_home.is_none() {
             info!("No Java home detected.  Cannot check for JPMS.");
         } else {
-            let jmods = PathBuf::from(self.jdk_home.as_ref().unwrap().to_str().unwrap()).join("jmods");
+            let jmods =
+                PathBuf::from(self.jdk_home.as_ref().unwrap().to_str().unwrap()).join("jmods");
 
             if jmods.exists() {
                 info!("jmods directory found in Java home.  Set up module support");
@@ -330,7 +360,9 @@ impl LaunchOptions {
         println!("JAVA_OPTS = {:?}", java_options);
 
         // construct_boot_classpath
-        let jruby_complete_jar = PathBuf::from(&platform_dir).join("lib").join("jruby-complete.jar");
+        let jruby_complete_jar = PathBuf::from(&platform_dir)
+            .join("lib")
+            .join("jruby-complete.jar");
         let jruby_jar = PathBuf::from(&platform_dir).join("lib").join("jruby.jar");
 
         if jruby_jar.exists() {
@@ -362,12 +394,11 @@ impl LaunchOptions {
             self.classpath.extend(self.classpath_after.to_owned());
         }
 
-
         Ok(())
     }
 
     fn add_jars_to_classpath(&mut self) {
-        let lib_dir= self.platform_dir.clone().unwrap().join("lib");
+        let lib_dir = self.platform_dir.clone().unwrap().join("lib");
 
         if !lib_dir.is_dir() {
             // FIXME: This should full on abort
@@ -396,7 +427,10 @@ impl LaunchOptions {
         }
 
         if self.boot_classpath.contains(&path) {
-            info!("{:?} already is within the boot classpath.  Skipping it.", path);
+            info!(
+                "{:?} already is within the boot classpath.  Skipping it.",
+                path
+            );
         } else {
             self.boot_classpath.push(path);
         }
@@ -413,7 +447,10 @@ impl LaunchOptions {
         }
 
         if self.boot_classpath.contains(&path) {
-            info!("{:?} already is within the boot classpath.  Not adding to classpath.", path);
+            info!(
+                "{:?} already is within the boot classpath.  Not adding to classpath.",
+                path
+            );
             return;
         } else {
             self.classpath.push(path);
@@ -425,7 +462,7 @@ impl LaunchOptions {
         let path = self.launcher_logfile.as_ref().unwrap().to_str().unwrap();
         let path = match path {
             "__stdout__" => None,
-            _ => Some(PathBuf::from(path))
+            _ => Some(PathBuf::from(path)),
         };
         println!("LOG IS {:?}", path);
         let result = file_logger::init(path);
@@ -435,7 +472,7 @@ impl LaunchOptions {
         result.ok();
     }
 
-    #[cfg(target_os="macos")]
+    #[cfg(target_os = "macos")]
     fn init_platform_dir_os(&mut self) -> Option<PathBuf> {
         extern "C" {
             fn _NSGetExecutablePath(buf: *mut libc::c_char, bufsize: *mut u32) -> libc::c_int;
@@ -466,7 +503,7 @@ impl LaunchOptions {
         }
     }
 
-    #[cfg(target_os="windows")]
+    #[cfg(target_os = "windows")]
     fn init_platform_dir_os(&mut self) -> Option<PathBuf> {
         //FIXME: need VirtualQuery and GetModuleFileName
         None
@@ -474,10 +511,13 @@ impl LaunchOptions {
 
     fn env_as_iter(value: String) -> Vec<String> {
         // FIXME: Some off quote removal but only for first/last char of string
-        value.split_ascii_whitespace().map(|a| a.to_string()).collect()
+        value
+            .split_ascii_whitespace()
+            .map(|a| a.to_string())
+            .collect()
     }
 
-    #[cfg(target_os="macos")]
+    #[cfg(target_os = "macos")]
     fn parse_os(&mut self) {
         if let None = env::var("JAVA_ENCODING") {
             self.push_java_opts_arg("-Dfile.encoding=UTF-8");
@@ -491,7 +531,7 @@ impl LaunchOptions {
         self.check_urandom()
     }
 
-    #[cfg(target_os="windows")]
+    #[cfg(target_os = "windows")]
     fn parse_os(&mut self) {
         // no checks
     }
@@ -540,7 +580,6 @@ impl LaunchOptions {
     fn push_java_opts_arg(&mut self, value: String) {
         self.java_opts.push(value.to_string());
     }
-
 }
 
 impl Default for LaunchOptions {

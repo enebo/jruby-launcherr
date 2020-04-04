@@ -1,9 +1,9 @@
-use std::sync::Mutex;
-use std::{fs, io};
+use log::{Level, LevelFilter, Metadata, Record};
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use log::{LevelFilter, Metadata, Level, Record};
+use std::sync::Mutex;
+use std::{fs, io};
 
 pub fn init(path: Option<PathBuf>) -> Result<(), FileLoggerError> {
     FileLogger::init(path)
@@ -32,14 +32,20 @@ impl FileLogger {
             let file = File::create(path);
 
             if file.is_err() {
-                return Err(FileLoggerError { reason: file.err().unwrap().to_string() })
+                return Err(FileLoggerError {
+                    reason: file.err().unwrap().to_string(),
+                });
             }
 
             Mutex::new(Some(file.unwrap()))
         };
         if log::set_boxed_logger(Box::new(FileLogger { file: logger }))
-            .map(|()| log::set_max_level(LevelFilter::Info)).is_err() {
-            return Err(FileLoggerError { reason: "could not set logger".to_string()})
+            .map(|()| log::set_max_level(LevelFilter::Info))
+            .is_err()
+        {
+            return Err(FileLoggerError {
+                reason: "could not set logger".to_string(),
+            });
         }
         Ok(())
     }
@@ -54,8 +60,10 @@ impl log::Log for FileLogger {
         if self.enabled(record.metadata()) {
             let mut guard = self.file.lock().unwrap();
             match guard.as_mut() {
-                Some(f) => write!(f, "{}: {}\n", record.level(), record.args()).expect("Could not write to log file"),
-                None => write!(io::stdout(), "{}: {}\n", record.level(), record.args()).expect("Could not write to log file"),
+                Some(f) => write!(f, "{}: {}\n", record.level(), record.args())
+                    .expect("Could not write to log file"),
+                None => write!(io::stdout(), "{}: {}\n", record.level(), record.args())
+                    .expect("Could not write to log file"),
             };
         }
     }
