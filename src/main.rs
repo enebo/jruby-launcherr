@@ -29,6 +29,19 @@ fn main() {
     let mut options = options.unwrap();
     if options.nailgun_client {
         options.prepend_program_arg("org.jruby.util.NailMain");
-        // FIXME: Add nailgun client support?
+        if options.command_only {
+            println!("{:?}", options.program_args);
+            std::process::exit(0);
+        } else {
+            // FIXME: Add nailgun client support?
+        }
+    };
+
+    if  options.command_only {
+        println!("{:?}", options.command_line());
+        std::process::exit(0);
     }
+
+
+
 }
