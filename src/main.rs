@@ -1,6 +1,7 @@
 extern crate log;
 extern crate sys_info;
 
+pub mod environment;
 pub mod file_helper;
 pub mod file_logger;
 pub mod launch_options;
@@ -28,7 +29,7 @@ fn main() {
 
     let mut options = options.unwrap();
     if options.nailgun_client {
-        options.prepend_program_arg("org.jruby.util.NailMain");
+        options.program_args.insert(0, "org.jruby.util.NailMain".to_string());
         if options.command_only {
             println!("{:?}", options.program_args);
             std::process::exit(0);
@@ -37,11 +38,8 @@ fn main() {
         }
     };
 
-    if  options.command_only {
+    if options.command_only {
         println!("{:?}", options.command_line());
         std::process::exit(0);
     }
-
-
-
 }

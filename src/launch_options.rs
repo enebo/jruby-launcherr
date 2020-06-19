@@ -1,5 +1,3 @@
-use crate::file_helper::find_from_path;
-use crate::file_logger;
 use core::fmt;
 use log::{error, info, warn};
 use std::error::Error;
@@ -7,9 +5,20 @@ use std::fmt::Formatter;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+use crate::environment::Environment;
+use crate::file_helper::find_from_path;
+use crate::file_logger;
+
 pub const MAIN_CLASS: &str = "org/jruby/Main";
 
 pub const XSS_DEFAULT: &str = "2048k";
+
+pub const DEV_MODE_JAVA_OPTIONS: [&str; 4] = [
+    "-XX:+TieredCompilation",
+    "-XX:TieredStopAtLevel=1",
+    "-Djruby.compile.mode=OFF",
+    "-Djruby.compile.invokedynamic=false"
+];
 
 #[cfg(target_os = "windows")]
 pub const JAVA_NAME: &str = "java.exe";
@@ -25,7 +34,7 @@ pub const SHELL: &str = "/bin/sh";
 
 #[derive(Debug, Clone)]
 pub struct LaunchError {
-    message: String,
+    message: &'static str,
 }
 
 impl fmt::Display for LaunchError {
@@ -42,18 +51,19 @@ impl std::error::Error for LaunchError {
 
 pub fn new(args: Vec<String>) -> Result<LaunchOptions, Box<dyn Error>> {
     let mut options = LaunchOptions::default();
+    let env = Environment::from_env();
 
-    options.parse(args)?;
+    options.parse(&env, args)?;
 
     if options.launcher_logfile.is_some() {
         options.setup_logging();
     };
 
-    options.determine_home()?;
+    options.determine_home(&env)?;
     info!("launch_options = {:?}", options);
-    options.determine_java_location()?;
+    options.determine_java_location(&env)?;
     info!("launch_options = {:?}", options);
-    options.prepare_options()?;
+    options.prepare_options(&env)?;
     info!("launch_options = {:?}", options);
 
     Ok(options)
@@ -91,31 +101,30 @@ macro_rules! arg_value {
             $args.next().to_owned().unwrap()
         } else {
             return Err(Box::new(LaunchError {
-                message: "no extra argument".to_string(),
+                message: "no extra argument",
             }));
         }
     }};
 }
 
 impl LaunchOptions {
-    pub fn parse(&mut self, args: Vec<String>) -> Result<(), Box<dyn Error>> {
-        if let Ok(java_opts) = env::var("JAVA_OPTS") {
+    pub fn parse(&mut self, env: &Environment, args: Vec<String>) -> Result<(), Box<dyn Error>> {
+        if let Some(java_opts) = &env.java_opts {
             self.java_opts.extend(LaunchOptions::env_as_iter(java_opts))
         }
 
-        if let Ok(jruby_opts) = env::var("JRUBY_OPTS") {
-            self.jruby_opts
-                .extend(LaunchOptions::env_as_iter(jruby_opts))
+        if let Some(jruby_opts) = &env.jruby_opts {
+            self.jruby_opts.extend(LaunchOptions::env_as_iter(jruby_opts))
         }
 
-        self.parse_os();
+        self.parse_os(env);
 
-        if let Ok(java_mem) = env::var("JAVA_MEM") {
-            self.push_java_opts_arg(java_mem)
+        if let Some(java_mem) = &env.java_mem {
+            self.java_args.push(java_mem.clone());
         }
 
-        if let Ok(java_stack) = env::var("JAVA_STACK") {
-            self.push_java_opts_arg(java_stack)
+        if let Some(java_stack) = &env.java_stack {
+            self.java_opts.push(java_stack.clone())
         }
 
         let mut args = args.into_iter().peekable();
@@ -127,7 +136,7 @@ impl LaunchOptions {
 
             match argument.as_str() {
                 "--" => {
-                    self.push_program_arg("--");
+                    self.program_args.push("--".to_string());
                     self.program_args.extend(args);
                     break;
                 }
@@ -138,47 +147,45 @@ impl LaunchOptions {
                 "-Xtrace" => self.launcher_logfile = Some(PathBuf::from(arg_value!(args))),
                 "-Xbootclass" => self.boot_class = Some(arg_value!(args)),
                 "-Xjdkhome" => self.jdk_home = Some(PathBuf::from(arg_value!(args))),
-                "-Xcp:p" => self.push_classpath_before(arg_value!(args)),
-                "-Xcp:a" => self.push_classpath_after(arg_value!(args)),
+                "-Xcp:p" => self.classpath_before.push(PathBuf::from(arg_value!(args))),
+                "-Xcp:a" => self.classpath_after.push(PathBuf::from(arg_value!(args))),
                 "-Xversion" => {
                     return Err(Box::new(LaunchError {
-                        message: "need to fix -Xversion".to_string(),
+                        message: "need to fix -Xversion",
                     }))
                 }
                 "-Xhelp" | "-X" => {
                     // FIXME: WOT
                     // print_to_console(help)
                     // if self.append_help.isok puts append_help
-                    self.push_java_arg("-Djruby.launcher.nopreamble=true");
-                    self.push_program_arg("-X");
+                    self.java_args.push("-Djruby.launcher.nopreamble=true".to_string());
+                    self.program_args.push("-X".to_string());
                 }
                 "-Xproperties" => self.program_args.push("--properties".to_string()),
                 // java options we need to pass to java process itself if we see them
                 "-J-cp" | "-J-classpath" => self
                     .classpath_explicit
                     .push(PathBuf::from(arg_value!(args))),
-                "--server" => self.push_java_arg("-server"),
-                "--client" => self.push_java_arg("-client"),
+                "--server" => self.java_args.push("-server".to_string()),
+                "--client" => self.java_args.push("-client".to_string()),
                 "--dev" => {
-                    self.push_java_arg("-XX:+TieredCompilation");
-                    self.push_java_arg("-XX:TieredStopAtLevel=1");
-                    self.push_java_arg("-Djruby.compile.mode=OFF");
-                    self.push_java_arg("-Djruby.compile.invokedynamic=false");
+                    let dev_args = DEV_MODE_JAVA_OPTIONS.iter().map(|e| e.to_string()).into_iter();
+                    self.java_args.extend(dev_args);
                 }
-                "--sample" => self.push_java_arg("-Xprof"),
+                "--sample" => self.java_args.push("-Xprof".to_string()),
                 "--manage" => {
-                    self.push_java_arg("-Dcom.sun.management.jmxremote");
-                    self.push_java_arg("-Djruby.management.enabled=true")
+                    self.java_args.push("-Dcom.sun.management.jmxremote".to_string());
+                    self.java_args.push("-Djruby.management.enabled=true".to_string())
                 }
-                "--headless" => self.push_java_arg("-Djava.awt.headless=true"),
+                "--headless" => self.java_args.push("-Djava.awt.headless=true".to_string()),
                 "--ng" => self.nailgun_client = true,
                 "--ng-server" => {
                     self.boot_class = Some("com/martiansoftware/nailgun/NGServer".to_string());
-                    self.push_java_arg("-server");
+                    self.java_args.push("-server".to_string());
                     self.no_boot_classpath = true;
                 }
                 "-Jea" => {
-                    self.push_java_arg("-ea");
+                    self.java_args.push("-ea".to_string());
                     self.no_boot_classpath = true;
                     println!("Note: -ea option is specified, there will be no bootclasspath in order to enable assertions")
                 }
@@ -191,13 +198,13 @@ impl LaunchOptions {
                             "-X" if rest.chars().next().unwrap().is_ascii_lowercase() => {
                                 // unwrap safe 3+ chars at this point
                                 let property = "-Djruby.".to_string() + rest;
-                                self.push_java_arg(&property)
+                                self.java_args.push(property)
                             }
-                            "-J" => self.push_java_arg(rest),
-                            _ => self.push_program_arg(&argument),
+                            "-J" => self.java_args.push(rest.to_string()),
+                            _ => self.program_args.push(argument),
                         }
                     } else {
-                        self.push_program_arg(&argument);
+                        self.program_args.push(argument);
                     }
                 }
             }
@@ -209,10 +216,10 @@ impl LaunchOptions {
 
     /// What directory is the main application (e.g. jruby).
     ///
-    fn determine_home(&mut self) -> Result<(), Box<dyn Error>> {
+    fn determine_home(&mut self, env: &Environment) -> Result<(), Box<dyn Error>> {
         info!("determining JRuby home");
 
-        if let Ok(java_opts) = env::var("JRUBY_HOME") {
+        if let Some(java_opts) = &env.jruby_home {
             info!("Found JRUBY_HOME = '{}'", java_opts);
 
             let dir = PathBuf::from(java_opts);
@@ -239,10 +246,10 @@ impl LaunchOptions {
         if argv0.is_absolute() {
             info!("Found absolute path for argv0");
             dir = Some(argv0.to_path_buf());
-        } else if argv0.parent().is_some() && env::current_dir().is_ok() {
+        } else if argv0.parent().is_some() && env.current_dir.is_some() {
             // relative path (will contain / or \).
-            info!("Relative path argv0...combine with CWD"); // FIXME: make cwd Option in LaunchOptions
-            dir = Some(env::current_dir()?.join(argv0).to_path_buf());
+            info!("Relative path argv0...combine with CWD");
+            dir = Some(env.current_dir.as_ref().unwrap().clone().join(argv0));
         } else {
             info!("Try and find argv0 within PATH env");
             dir = find_from_path(argv0.to_str().unwrap());
@@ -257,26 +264,19 @@ impl LaunchOptions {
         if !dir.as_ref().unwrap().exists() {
             error!("Failue: '{:?}' does not exist", dir);
             return Err(Box::new(LaunchError {
-                message: "unable to find JRuby home".to_string(),
+                message: "unable to find JRuby home",
             }));
         }
 
+        let dir = dir.unwrap();
+
         info!("Success found it: '{:?}'", dir);
-        // FIXME: We can error here if we end with a path of "/jruby" (which would not sanely happen).
-        let parent = dir
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        self.platform_dir = Some(parent);
+        self.platform_dir = Some(dir.ancestors().take(3).collect());
         Ok(())
     }
 
-    fn determine_java_location(&mut self) -> Result<(), Box<dyn Error>> {
-        let java = if let Ok(cmd) = env::var("JAVACMD") {
+    fn determine_java_location(&mut self, env: &Environment) -> Result<(), Box<dyn Error>> {
+        let java = if let Some(cmd) = &env.java_cmd {
             info!("Found JAVACMD");
             Some(PathBuf::from(cmd))
         } else if self.jdk_home.is_some() {
@@ -286,7 +286,7 @@ impl LaunchOptions {
                     .join("bin")
                     .join(JAVA_NAME),
             )
-        } else if let Ok(home) = env::var("JAVA_HOME") {
+        } else if let Some(home) = &env.java_home {
             info!("Deriving from JAVA_HOME");
             Some(PathBuf::from(home).join("bin").join(JAVA_NAME))
         } else {
@@ -298,7 +298,7 @@ impl LaunchOptions {
         Ok(())
     }
 
-    fn prepare_options(&mut self) -> Result<(), Box<dyn Error>> {
+    fn prepare_options(&mut self, env: &Environment) -> Result<(), Box<dyn Error>> {
         let mut java_options: Vec<String> = vec![];
 
         if let Some(jdk_home) = &self.jdk_home {
@@ -318,26 +318,24 @@ impl LaunchOptions {
             jni_dir = platform_dir.clone().join("lib").join("native");
             if !jni_dir.exists() {
                 return Err(Box::new(LaunchError {
-                    message: "unable to find JNI dir".to_string(),
+                    message: "unable to find JNI dir",
                 }));
             }
         }
 
         let os_name = sys_info::os_type().unwrap();
-        let entries =
-            fs::read_dir(jni_dir)
-                .unwrap()
-                .into_iter()
-                .filter_map(|entry| -> Option<PathBuf> {
-                    let path = &entry.unwrap().path().to_str().unwrap().to_owned();
+        let entries = fs::read_dir(jni_dir)
+            .unwrap()
+            .filter_map(|entry| -> Option<PathBuf> {
+                let path = &entry.unwrap().path().to_str().unwrap().to_owned();
 
-                    if path.contains(&os_name) {
-                        Some(PathBuf::from(path))
-                    } else {
-                        None
-                    }
-                });
-        let paths = env::join_paths(entries.into_iter())?;
+                if path.contains(&os_name) {
+                    Some(PathBuf::from(path))
+                } else {
+                    None
+                }
+            });
+        let paths = env::join_paths(entries)?;
         if !paths.is_empty() {
             info!("found paths: {}", paths.to_str().unwrap());
             java_options.push("-Djffi.boot.library.path=".to_string() + paths.to_str().unwrap());
@@ -361,10 +359,9 @@ impl LaunchOptions {
         }
 
         // construct_boot_classpath
-        let jruby_complete_jar = PathBuf::from(&platform_dir)
-            .join("lib")
-            .join("jruby-complete.jar");
-        let jruby_jar = PathBuf::from(&platform_dir).join("lib").join("jruby.jar");
+        let lib_dir = PathBuf::from(&platform_dir).join("lib");
+        let jruby_complete_jar = lib_dir.clone().join("jruby-complete.jar");
+        let jruby_jar = lib_dir.join("lib").join("jruby.jar");
 
         if jruby_jar.exists() {
             self.add_to_boot_class_path(jruby_jar, true);
@@ -383,7 +380,7 @@ impl LaunchOptions {
 
         if self.classpath_explicit.is_empty() {
             info!("No explicit classpath passed in....Gettting from ENV");
-            if let Some(classpath) = env::var_os("CLASSPATH") {
+            if let Some(classpath) = &env.classpath {
                 self.classpath.extend(env::split_paths(&classpath));
             }
         } else {
@@ -413,7 +410,9 @@ impl LaunchOptions {
         java_options.push("-Dsun.java.command=".to_string() + &command_name);
 
         if !self.boot_classpath.is_empty() {
-            let path = env::join_paths(self.boot_classpath.iter())?.into_string().unwrap();
+            let path = env::join_paths(self.boot_classpath.iter())?
+                .into_string()
+                .unwrap();
             if self.use_module_path {
                 java_options.push("--module-path=".to_string() + &path);
             } else {
@@ -423,12 +422,14 @@ impl LaunchOptions {
 
         if self.use_module_path {
             let bin_options_file: PathBuf = ["bin", ".jruby.module_opts"].iter().collect();
-            let mut module_options_file = self.platform_dir.as_ref().unwrap().clone();
-            module_options_file.push(bin_options_file);
+            let module_options_file = self.platform_dir.as_ref().unwrap().join(bin_options_file);
             println!("MOF: {:?}", module_options_file);
 
             if module_options_file.exists() {
-                info!("Found module options file {:?}.  Using that.", module_options_file);
+                info!(
+                    "Found module options file {:?}.  Using that.",
+                    module_options_file
+                );
                 java_options.push("@".to_string() + module_options_file.to_str().unwrap());
             } else {
                 info!("Found no module options file.  Use hard-coded values.");
@@ -443,7 +444,9 @@ impl LaunchOptions {
             }
         }
 
-        let class_path = env::join_paths(self.classpath.iter())?.into_string().unwrap();
+        let class_path = env::join_paths(self.classpath.iter())?
+            .into_string()
+            .unwrap();
         if self.fork_java {
             java_options.push("-cp".to_string());
             java_options.push(class_path);
@@ -510,7 +513,6 @@ impl LaunchOptions {
                 "{:?} already is within the boot classpath.  Not adding to classpath.",
                 path
             );
-            return;
         } else {
             self.classpath.push(path);
         }
@@ -572,7 +574,7 @@ impl LaunchOptions {
         None
     }
 
-    fn env_as_iter(value: String) -> Vec<String> {
+    fn env_as_iter(value: &String) -> Vec<String> {
         // FIXME: Some off quote removal but only for first/last char of string
         value
             .split_ascii_whitespace()
@@ -581,21 +583,21 @@ impl LaunchOptions {
     }
 
     #[cfg(target_os = "macos")]
-    fn parse_os(&mut self) {
-        if let None = env::var("JAVA_ENCODING") {
-            self.push_java_opts_arg("-Dfile.encoding=UTF-8");
+    fn parse_os(&mut self, env: &Environment) {
+        if let None = env.java_encoding {
+            self.java_opts.push("-Dfile.encoding=UTF-8".to_string());
         }
 
         check_urandom(options)
     }
 
     #[cfg(any(unix))]
-    fn parse_os(&mut self) {
+    fn parse_os(&mut self, _env: &Environment) {
         self.check_urandom()
     }
 
     #[cfg(target_os = "windows")]
-    fn parse_os(&mut self) {
+    fn parse_os(&mut self, _env: &Environment) {
         // no checks
     }
 
@@ -615,32 +617,8 @@ impl LaunchOptions {
             // Non-file URL causes fallback to slow threaded SeedGenerator.
             // See https://bz.apache.org/bugzilla/show_bug.cgi?id=56139
             if access(path.as_ptr() as *const i8, R_OK) == 0 {
-                self.push_java_opts_arg("-Djava.security.egd=file:/dev/urandom".to_string());
+                self.java_opts.push("-Djava.security.egd=file:/dev/urandom".to_string());
             }
         }
-    }
-
-    fn push_java_arg(&mut self, value: &str) {
-        self.java_args.push(value.to_string());
-    }
-
-    pub(crate) fn prepend_program_arg(&mut self, value: &str) {
-        self.program_args.insert(0, value.to_string());
-    }
-
-    fn push_program_arg(&mut self, value: &str) {
-        self.program_args.push(value.to_string());
-    }
-
-    fn push_classpath_before(&mut self, value: String) {
-        self.classpath_before.push(PathBuf::from(value));
-    }
-
-    fn push_classpath_after(&mut self, value: String) {
-        self.classpath_after.push(PathBuf::from(value));
-    }
-
-    fn push_java_opts_arg(&mut self, value: String) {
-        self.java_opts.push(value.to_string());
     }
 }

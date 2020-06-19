@@ -60,9 +60,9 @@ impl log::Log for FileLogger {
         if self.enabled(record.metadata()) {
             let mut guard = self.file.lock().unwrap();
             match guard.as_mut() {
-                Some(f) => write!(f, "{}: {}\n", record.level(), record.args())
+                Some(f) => writeln!(f, "{}: {}", record.level(), record.args())
                     .expect("Could not write to log file"),
-                None => write!(io::stdout(), "{}: {}\n", record.level(), record.args())
+                None => writeln!(io::stdout(), "{}: {}", record.level(), record.args())
                     .expect("Could not write to log file"),
             };
         }
