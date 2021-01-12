@@ -229,7 +229,7 @@ impl LaunchOptions {
             Some(PathBuf::from(home).join("bin").join(JAVA_NAME))
         } else {
             info!("Trying to find java command on Path");
-            find_from_path(JAVA_NAME)
+            find_from_path(JAVA_NAME, &env.path, |f| f.exists())
         };
 
         self.java_location = java;

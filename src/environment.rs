@@ -24,6 +24,7 @@ pub struct Environment {
     pub java_stack: Option<String>,
     pub jruby_opts: Option<String>,
     pub jruby_home: Option<String>,
+    pub path: Option<String>,
 }
 
 impl Environment {
@@ -40,6 +41,7 @@ impl Environment {
             java_stack: env::var("JAVA_STACK").ok(),
             jruby_opts: env::var("JRUBY_OPTS").ok(),
             jruby_home: env::var("JRUBY_HOME").ok(),
+            path: env::var("PATH").ok(),
         }
     }
 
@@ -71,7 +73,7 @@ impl Environment {
             return Ok(dir);
         }
 
-        let dir = self.derive_home_from_argv0(self.argv0());
+        let dir = self.derive_home_from_argv0(self.argv0(), &self.path, |f| f.exists());
 
         if !dir.exists() {
             error!("Failue: '{:?}' does not exist", &dir);
@@ -89,17 +91,18 @@ impl Environment {
     ///  2. CWD + relative path
     ///  3. Find in PATH + relative path
     ///  4. Go for broke...just return ARGV0 value itself.
-    fn derive_home_from_argv0(&self, argv0: &Path) -> PathBuf {
+    fn derive_home_from_argv0<T>(&self, argv0: &Path, path: &Option<String>, test: T) -> PathBuf where
+        T: Fn(&PathBuf) -> bool {
         if argv0.is_absolute() {
             info!("Found absolute path for argv0");
             argv0.to_path_buf()
         } else if argv0.parent().is_some() && self.current_dir.is_some() {
             // relative path (will contain / or \).
             info!("Relative path argv0...combine with CWD");
-            self.current_dir.as_ref().unwrap().clone().join(argv0)
+            self.current_dir.as_ref().unwrap().join(argv0)
         } else {
             info!("Try and find argv0 within PATH env");
-            if let Some(dir) = find_from_path(argv0.to_str().unwrap()) {
+            if let Some(dir) = find_from_path(argv0.to_str().unwrap(), path, test) {
                 dir
             } else {
                 info!("Not found in PATH...just leave argv0 as-is");
@@ -112,6 +115,7 @@ impl Environment {
 #[cfg(test)]
 mod tests {
     use crate::environment::Environment;
+    use std::path::PathBuf;
 
     fn empty_env() -> Environment {
         Environment {
@@ -126,15 +130,22 @@ mod tests {
             java_stack: None,
             jruby_opts: None,
             jruby_home: None,
-
+            path: None,
         }
     }
 
     #[test]
-    fn test_jruby_home() {
+    fn test_jruby_home_argv0() {
         let mut env = empty_env();
+        let absolute: PathBuf = ["/", "home", "user", "jruby", "bin", "jruby"].iter().collect();
+        let argv0 = &absolute;
+        let test = |f: &PathBuf| f.exists();
 
-        env.jruby_home = Some(String::from("ddddd"));
+        assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &absolute);
 
+        let argv0: PathBuf = ["bin", "jruby"].iter().collect();
+        env.current_dir = Some(["/", "home", "user", "jruby"].iter().collect());
+
+        assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &absolute);
     }
 }

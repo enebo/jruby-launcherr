@@ -1,14 +1,14 @@
-use std::env;
 use std::env::split_paths;
 use std::path::PathBuf;
 
-pub(crate) fn find_from_path(file: &str) -> Option<PathBuf> {
-    if let Ok(paths) = env::var("PATH") {
+pub(crate) fn find_from_path<T>(file: &str, path: &Option<String>, test: T) -> Option<PathBuf> where
+    T: Fn(&PathBuf) -> bool {
+    if let Some(paths) = path {
         for path in split_paths(paths.as_str()) {
-            let test = path.join(file);
+            let test_path = path.join(file);
 
-            if test.exists() {
-                return Some(test);
+            if test(&test_path) {
+                return Some(test_path)
             }
         }
     }
