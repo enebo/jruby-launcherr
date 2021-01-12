@@ -47,7 +47,7 @@ impl Environment {
         Path::new(self.args.iter().next().unwrap())
     }
 
-    /// What directory is the main application (e.g. jruby).
+    /// What directory is the main application (e.g. jruby)?
     ///
     pub(crate) fn determine_jruby_home(&self) -> Result<PathBuf, Box<dyn Error>> {
         info!("determining JRuby home");
@@ -71,36 +71,41 @@ impl Environment {
             return Ok(dir);
         }
 
-        let argv0 = self.argv0();
-        let mut dir: Option<PathBuf>;
+        let dir = self.derive_home_from_argv0(self.argv0());
 
-        if argv0.is_absolute() {
-            info!("Found absolute path for argv0");
-            dir = Some(argv0.to_path_buf());
-        } else if argv0.parent().is_some() && self.current_dir.is_some() {
-            // relative path (will contain / or \).
-            info!("Relative path argv0...combine with CWD");
-            dir = Some(self.current_dir.as_ref().unwrap().clone().join(argv0));
-        } else {
-            info!("Try and find argv0 within PATH env");
-            dir = find_from_path(argv0.to_str().unwrap());
-        }
-
-        if dir.is_none() {
-            // hail mary pass in argv[0].
-            info!("Previous attempt failed...just leave argv0 as-is");
-            dir = Some(argv0.to_path_buf());
-        }
-
-        if !dir.as_ref().unwrap().exists() {
-            error!("Failue: '{:?}' does not exist", dir);
+        if !dir.exists() {
+            error!("Failue: '{:?}' does not exist", &dir);
             return Err(Box::new(LaunchError {
                 message: "unable to find JRuby home",
             }));
         }
 
         info!("Success found it: '{:?}'", &dir);
-        Ok(dir.unwrap().ancestors().take(3).collect())
+        Ok(dir.ancestors().take(3).collect())
+    }
+
+    /// Return a possible JRUBY install home based on liklihood.
+    ///  1. assume absolute path is launched from project dir
+    ///  2. CWD + relative path
+    ///  3. Find in PATH + relative path
+    ///  4. Go for broke...just return ARGV0 value itself.
+    fn derive_home_from_argv0(&self, argv0: &Path) -> PathBuf {
+        if argv0.is_absolute() {
+            info!("Found absolute path for argv0");
+            argv0.to_path_buf()
+        } else if argv0.parent().is_some() && self.current_dir.is_some() {
+            // relative path (will contain / or \).
+            info!("Relative path argv0...combine with CWD");
+            self.current_dir.as_ref().unwrap().clone().join(argv0)
+        } else {
+            info!("Try and find argv0 within PATH env");
+            if let Some(dir) = find_from_path(argv0.to_str().unwrap()) {
+                dir
+            } else {
+                info!("Not found in PATH...just leave argv0 as-is");
+                argv0.to_path_buf()
+            }
+        }
     }
 }
 
