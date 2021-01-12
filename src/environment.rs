@@ -99,10 +99,8 @@ impl Environment {
             }));
         }
 
-        let dir = dir.unwrap();
-
-        info!("Success found it: '{:?}'", dir);
-        Ok(dir.ancestors().take(3).collect())
+        info!("Success found it: '{:?}'", &dir);
+        Ok(dir.unwrap().ancestors().take(3).collect())
     }
 }
 
