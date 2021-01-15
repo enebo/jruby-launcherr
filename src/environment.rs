@@ -51,7 +51,8 @@ impl Environment {
 
     /// What directory is the main application (e.g. jruby)?
     ///
-    pub(crate) fn determine_jruby_home(&self) -> Result<PathBuf, Box<dyn Error>> {
+    pub(crate) fn determine_jruby_home<T>(&self, exist_test: T) -> Result<PathBuf, Box<dyn Error>> where
+        T: Fn(&PathBuf) -> bool + Copy {
         info!("determining JRuby home");
 
         if let Some(java_opts) = &self.jruby_home {
@@ -59,12 +60,12 @@ impl Environment {
 
             let dir = PathBuf::from(java_opts);
             let jruby_bin = dir.join("bin");
-            if jruby_bin.exists() {
+            if exist_test(&jruby_bin) {
                 info!("Success: Found bin directory within JRUBY_HOME");
 
                 return Ok(dir);
             } else {
-                info!("Cannot find bin within provided JRUBY_HOME {:?}", jruby_bin);
+                info!("Cannot find bin within provided JRUBY_HOME {:?}", &jruby_bin);
             }
         }
 
@@ -73,9 +74,9 @@ impl Environment {
             return Ok(dir);
         }
 
-        let dir = self.derive_home_from_argv0(self.argv0(), &self.path, |f| f.exists());
+        let dir = self.derive_home_from_argv0(self.argv0(), &self.path, exist_test);
 
-        if !dir.exists() {
+        if !exist_test(&dir) {
             error!("Failue: '{:?}' does not exist", &dir);
             return Err(Box::new(LaunchError {
                 message: "unable to find JRuby home",
@@ -115,7 +116,7 @@ impl Environment {
 #[cfg(test)]
 mod tests {
     use crate::environment::Environment;
-    use std::path::PathBuf;
+    use std::path::{MAIN_SEPARATOR, PathBuf};
 
     fn empty_env() -> Environment {
         Environment {
@@ -135,17 +136,52 @@ mod tests {
     }
 
     #[test]
+    fn test_determine_jruby_home() {
+        let mut env = empty_env();
+        let traditional_home: PathBuf = [MAIN_SEPARATOR.to_string().as_str(), "home", "user", "jruby"].iter().collect();
+        let absolute: PathBuf = [MAIN_SEPARATOR.to_string().as_str(), "home", "user", "jruby", "bin", "jruby"].iter().collect();
+        let argv0 = &absolute;
+        let test = |f: &PathBuf| f.exists();
+
+        env.jruby_home = Some(traditional_home.into_os_string().into_string().unwrap());
+
+        assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &absolute);
+    }
+
+    #[test]
     fn test_jruby_home_argv0() {
         let mut env = empty_env();
-        let absolute: PathBuf = ["/", "home", "user", "jruby", "bin", "jruby"].iter().collect();
+        let absolute: PathBuf = [MAIN_SEPARATOR.to_string().as_str(), "home", "user", "jruby", "bin", "jruby"].iter().collect();
         let argv0 = &absolute;
         let test = |f: &PathBuf| f.exists();
 
         assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &absolute);
 
         let argv0: PathBuf = ["bin", "jruby"].iter().collect();
-        env.current_dir = Some(["/", "home", "user", "jruby"].iter().collect());
+        let traditional_home: PathBuf = [MAIN_SEPARATOR.to_string().as_str(), "home", "user", "jruby"].iter().collect();
+        env.current_dir = Some(traditional_home.clone());
 
         assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &absolute);
+
+        env.current_dir = None;
+
+        assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &argv0);
+
+        let test_home = absolute.clone();
+        let path = Some(traditional_home.into_os_string().into_string().unwrap());
+        let path_test = |t: &PathBuf| t == &test_home;
+
+        assert_eq!(env.derive_home_from_argv0(&argv0, &path, path_test).as_os_str(), &absolute);
+    }
+
+    #[test]
+    fn test_jruby_home_argv0_windows_specific() {
+        let env = empty_env();
+        let absolute: PathBuf = [r"\\frogger\", "home", "user", "jruby", "bin", "jruby"].iter().collect();
+        let argv0 = &absolute;
+        let test = |f: &PathBuf| f.exists();
+
+        assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &absolute);
+
     }
 }
