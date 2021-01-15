@@ -40,6 +40,8 @@ pub(crate) fn init_platform_dir_os() -> Option<PathBuf> {
 #[cfg(any(unix))]
 pub(crate) fn init_platform_dir_os() -> Option<PathBuf> {
     use std::fs::read_link;
+    use std::path::Path;
+
     if let Ok(path) = read_link(Path::new("/proc/self/exe")) {
         Some(path)
     } else {

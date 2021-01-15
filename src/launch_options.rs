@@ -509,6 +509,7 @@ impl LaunchOptions {
         use libc::{access, R_OK};
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
+        use std::path::Path;
 
         let path = CString::new(Path::new("/dev/urandom").as_os_str().as_bytes()).unwrap();
 
