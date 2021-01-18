@@ -87,7 +87,7 @@ pub struct LaunchOptions {
     java_opts: Vec<String>,
     jruby_opts: Vec<String>,
     platform_dir: Option<PathBuf>,
-    java_location: Option<PathBuf>,
+    pub(crate) java_location: Option<PathBuf>,
     xss: Option<String>,
     use_module_path: bool,
     boot_classpath: Vec<PathBuf>,
@@ -131,8 +131,6 @@ impl LaunchOptions {
         args.next().expect("Impossible to not have argv0");
 
         while let Some(argument) = args.next() {
-            println!("ARG: {}", argument);
-
             match argument.as_str() {
                 "--" => {
                     self.program_args.push("--".to_string());
@@ -208,7 +206,7 @@ impl LaunchOptions {
                 }
             }
         }
-        println!("launch options = {:?}", self);
+        info!("launch options = {:?}", self);
 
         Ok(())
     }
@@ -232,12 +230,13 @@ impl LaunchOptions {
             find_from_path(JAVA_NAME, &env.path, |f| f.exists())
         };
 
+        // FIXME: Seemingly if not found on path we should probably just exit with an error here.
         self.java_location = java;
         Ok(())
     }
 
     fn prepare_options(&mut self, env: &Environment) -> Result<(), Box<dyn Error>> {
-        let mut java_options: Vec<String> = vec![];
+        let mut java_options: Vec<String> = self.java_opts.clone();
 
         if let Some(jdk_home) = &self.jdk_home {
             java_options.push("-Djdk.home=".to_string() + jdk_home.to_str().unwrap());
@@ -251,7 +250,7 @@ impl LaunchOptions {
 
         let mut jni_dir = platform_dir.clone().join("lib").join("jni");
 
-        println!("JNI DIR: {:?}, {}", jni_dir, jni_dir.exists());
+        info!("JNI DIR: {:?}, {}", jni_dir, jni_dir.exists());
         if !jni_dir.exists() {
             jni_dir = platform_dir.clone().join("lib").join("native");
             if !jni_dir.exists() {
@@ -262,7 +261,7 @@ impl LaunchOptions {
         }
 
         let os_name = sys_info::os_type().unwrap();
-        let entries = fs::read_dir(jni_dir)
+        let entries = fs::read_dir(&jni_dir)
             .unwrap()
             .filter_map(|entry| -> Option<PathBuf> {
                 let path = &entry.unwrap().path().to_str().unwrap().to_owned();
@@ -273,7 +272,12 @@ impl LaunchOptions {
                     None
                 }
             });
-        let paths = env::join_paths(entries)?;
+
+        let mut paths: Vec<PathBuf> = vec![jni_dir];
+        paths.extend(entries);
+
+        let paths = env::join_paths(paths)?;
+
         if !paths.is_empty() {
             info!("found paths: {}", paths.to_str().unwrap());
             java_options.push("-Djffi.boot.library.path=".to_string() + paths.to_str().unwrap());
@@ -361,7 +365,7 @@ impl LaunchOptions {
         if self.use_module_path {
             let bin_options_file: PathBuf = ["bin", ".jruby.module_opts"].iter().collect();
             let module_options_file = self.platform_dir.as_ref().unwrap().join(bin_options_file);
-            println!("MOF: {:?}", module_options_file);
+            info!("MOF: {:?}", module_options_file);
 
             if module_options_file.exists() {
                 info!(
@@ -392,7 +396,8 @@ impl LaunchOptions {
             java_options.push("-Djava.class.path=".to_string() + class_path.as_str());
         }
 
-        println!("JAVA_OPTS = {:?}", java_options);
+        info!("JAVA_OPTS = {:?}", java_options);
+        self.java_opts = java_options;
 
         Ok(())
     }
@@ -463,16 +468,20 @@ impl LaunchOptions {
             "__stdout__" => None,
             _ => Some(PathBuf::from(path)),
         };
-        println!("LOG IS {:?}", path);
+
         let result = file_logger::init(path);
         if result.is_err() {
-            panic!("PANICK LOCGGGG: {:?}", result)
+            panic!("Cannot resolve file logger: {:?}", result)
         }
         result.ok();
     }
 
-    pub fn command_line(&self) -> String {
-        "".to_string()
+    pub fn command_line(&self) -> Vec<String> {
+        let mut command_line = self.java_opts.clone();
+
+        command_line.push(self.boot_class.clone().unwrap());
+        command_line.extend(self.program_args.clone());
+        command_line
     }
 
     fn env_as_iter(value: &String) -> Vec<String> {
