@@ -1,5 +1,5 @@
 use std::env;
-use std::path::{PathBuf, Path};
+use std::path::PathBuf;
 use log::{error, info};
 use crate::launch_options::LaunchError;
 use crate::file_helper::find_from_path;

@@ -499,7 +499,8 @@ impl LaunchOptions {
             self.java_opts.push("-Dfile.encoding=UTF-8".to_string());
         }
 
-        check_urandom(options)
+        // FIXME: old launcher still checked this on macos but problems in check_urandom not compiling on macos
+        //check_urandom(options)
     }
 
     #[cfg(any(unix))]
@@ -514,7 +515,7 @@ impl LaunchOptions {
 
     // Force OpenJDK-based JVMs to use /dev/urandom for random number generation
     // See https://github.com/jruby/jruby/issues/4685 among others.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(any(unix))]
     fn check_urandom(&mut self) {
         use libc::{access, R_OK};
         use std::ffi::CString;
