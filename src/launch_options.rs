@@ -494,7 +494,7 @@ impl LaunchOptions {
     }
 
     #[cfg(unix)]
-    fn parse_os(&mut self, _env: &Environment) {
+    fn parse_os(&mut self, env: &Environment) {
         if cfg!(target_os="macos") {
             if let None = env.java_encoding {
                 self.java_opts.push("-Dfile.encoding=UTF-8".to_string());
