@@ -514,7 +514,7 @@ impl LaunchOptions {
 
     // Force OpenJDK-based JVMs to use /dev/urandom for random number generation
     // See https://github.com/jruby/jruby/issues/4685 among others.
-    #[cfg(any(unix))]
+    #[cfg(not(target_os = "windows"))]
     fn check_urandom(&mut self) {
         use libc::{access, R_OK};
         use std::ffi::CString;
