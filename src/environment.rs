@@ -2,8 +2,9 @@ use std::env;
 use std::path::{PathBuf, Path};
 use log::{error, info};
 use crate::launch_options::LaunchError;
-use crate::file_helper::{find_from_path, init_platform_dir_os};
+use crate::file_helper::find_from_path;
 use std::error::Error;
+use process_path::get_executable_path;
 
 /// Represents a wrapper around accessing the actual OS environment.
 ///
@@ -45,13 +46,20 @@ impl Environment {
         }
     }
 
-    pub(crate) fn argv0(&self) -> &Path {
-        Path::new(self.args.iter().next().unwrap())
+    pub(crate) fn argv0(&self) -> PathBuf {
+        let argv0 = self.args.iter().next().unwrap();
+        let path = PathBuf::from(argv0);
+
+        if cfg!(target_os = "windows") && path.extension().is_none() {
+            return path.with_extension(".exe");
+        }
+
+        path
     }
 
     /// What directory is the main application (e.g. jruby)?
     ///
-    pub(crate) fn determine_jruby_home<T>(&self, exist_test: T) -> Result<PathBuf, Box<dyn Error>> where
+    pub(crate) fn determine_jruby_executable<T>(&self, exist_test: T) -> Result<PathBuf, Box<dyn Error>> where
         T: Fn(&PathBuf) -> bool + Copy {
         info!("determining JRuby home");
 
@@ -69,12 +77,12 @@ impl Environment {
             }
         }
 
-        if let Some(dir) = init_platform_dir_os() {
-            info!("Success: Found from os magic!");
+        if let Some(dir) = get_executable_path() {
+            info!("Success: Found from os magic! {:?}", &dir);
             return Ok(dir);
         }
 
-        let dir = self.derive_home_from_argv0(self.argv0(), &self.path, exist_test);
+        let dir = self.derive_home_from_argv0(&self.argv0(), &self.path, exist_test);
 
         if !exist_test(&dir) {
             error!("Failue: '{:?}' does not exist", &dir);
@@ -84,7 +92,7 @@ impl Environment {
         }
 
         info!("Success found it: '{:?}'", &dir);
-        Ok(dir.ancestors().take(3).collect())
+        Ok(dir)
     }
 
     /// Return a possible JRUBY install home based on liklihood.
@@ -92,12 +100,18 @@ impl Environment {
     ///  2. CWD + relative path
     ///  3. Find in PATH + relative path
     ///  4. Go for broke...just return ARGV0 value itself.
-    fn derive_home_from_argv0<T>(&self, argv0: &Path, path: &Option<String>, test: T) -> PathBuf where
+    fn derive_home_from_argv0<T>(&self, argv0: &PathBuf, path: &Option<String>, test: T) -> PathBuf where
         T: Fn(&PathBuf) -> bool {
         if argv0.is_absolute() {
             info!("Found absolute path for argv0");
-            argv0.to_path_buf()
-        } else if argv0.parent().is_some() && self.current_dir.is_some() {
+            return argv0.to_path_buf();
+        }
+
+        let parent = argv0.parent();
+        if parent.is_some()
+            && !parent.unwrap().as_os_str().is_empty()
+            && self.current_dir.is_some()
+            && test(&self.current_dir.as_ref().unwrap().join(argv0)) {
             // relative path (will contain / or \).
             info!("Relative path argv0...combine with CWD");
             self.current_dir.as_ref().unwrap().join(argv0)
@@ -160,8 +174,9 @@ mod tests {
         let argv0: PathBuf = ["bin", "jruby"].iter().collect();
         let traditional_home: PathBuf = [MAIN_SEPARATOR.to_string().as_str(), "home", "user", "jruby"].iter().collect();
         env.current_dir = Some(traditional_home.clone());
+        let absolute_test = |f: &PathBuf| f == &absolute;
 
-        assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &absolute);
+        assert_eq!(env.derive_home_from_argv0(&argv0, &None, absolute_test).as_os_str(), &absolute);
 
         env.current_dir = None;
 

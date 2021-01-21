@@ -59,7 +59,8 @@ pub fn new(args: Vec<String>) -> Result<LaunchOptions, Box<dyn Error>> {
         options.setup_logging();
     };
 
-    options.platform_dir = Some(env.determine_jruby_home(|f| f.exists())?);
+    let executable = env.determine_jruby_executable(|f| f.exists())?;
+    options.platform_dir = Some(executable.ancestors().take(3).collect());
     info!("launch_options = {:?}", options);
     options.determine_java_location(&env)?;
     info!("launch_options = {:?}", options);

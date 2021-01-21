@@ -20,8 +20,14 @@ fn print_error(err: Box<dyn Error>) {
 }
 
 #[cfg(target_os = "windows")]
-fn execute(command: Vec<String>) {
+fn execute(command: String, args: Vec<String>) {
+    use std::process::Command;
 
+    // Old launcher spawns command suspended and then disbles parents control-c then resumes after that point
+    Command::new(command)
+        .args(args)
+        .spawn().unwrap()
+        .wait().expect("The child to end");
 }
 
 #[cfg(not(target_os = "windows"))]
