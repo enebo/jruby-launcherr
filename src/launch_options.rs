@@ -493,19 +493,16 @@ impl LaunchOptions {
             .collect()
     }
 
-    #[cfg(target_os = "macos")]
-    fn parse_os(&mut self, env: &Environment) {
-        if let None = env.java_encoding {
-            self.java_opts.push("-Dfile.encoding=UTF-8".to_string());
-        }
-
-        // FIXME: old launcher still checked this on macos but problems in check_urandom not compiling on macos
-        //check_urandom(options)
-    }
-
-    #[cfg(all(any(unix),not(macos)))]
+    #[cfg(unix)]
     fn parse_os(&mut self, _env: &Environment) {
-        self.check_urandom()
+        if cfg!(target_os="macos") {
+            if let None = env.java_encoding {
+                self.java_opts.push("-Dfile.encoding=UTF-8".to_string());
+            }
+        } else {
+            // FIXME: old launcher still checked this on macos but problems in check_urandom not compiling on macos
+            self.check_urandom()
+        }
     }
 
     #[cfg(target_os = "windows")]
