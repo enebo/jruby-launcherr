@@ -503,7 +503,7 @@ impl LaunchOptions {
         //check_urandom(options)
     }
 
-    #[cfg(any(unix))]
+    #[cfg(all(any(unix),not(macos)))]
     fn parse_os(&mut self, _env: &Environment) {
         self.check_urandom()
     }
