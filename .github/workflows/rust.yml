@@ -12,13 +12,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: davidB/rust-cargo-make@v1
     - uses: actions/checkout@v2
     - uses: actions-rs/cargo@v1
       with:
         command: build
         args: --release --all-features
     - name: Frobnicate
+    - uses: davidB/rust-cargo-make@v1
       with:
         command: make
         args: --makefile Makefile.toml frobnicate
@@ -59,6 +59,7 @@ jobs:
         command: build
         args: --release --all-features
     - name: Frobnicate
+    - uses: davidB/rust-cargo-make@v1
       with:
         command: make
         args: --makefile Makefile.toml frobnicate
