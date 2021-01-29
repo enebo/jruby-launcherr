@@ -20,8 +20,9 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/')
+      run: cp target/release/jruby target/release/jruby_linux
       with:
-        files: target/release/jruby
+        files: target/release/jruby_linux
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
       
