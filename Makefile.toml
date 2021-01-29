@@ -1,0 +1,15 @@
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
+[tasks.frobnicate]
+linux_alias = "linux_frobnicate"
+windows_alias = "windows_frobnicate"
+mac_alias = "mac_frobnicate"
+
+[tasks.linux_frobnicate]
+script = "cp target/release/jruby target/release/jruby_linux; strip target/release/jruby_linux"
+
+[tasks.mac_frobnicate]
+script = "cp target/release/jruby target/release/jruby_macos; ; strip target/release/jruby_macos"
+
+[tasks.windows_frobnicate]
