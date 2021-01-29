@@ -23,6 +23,8 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: target/release/jruby
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
       
@@ -38,6 +40,8 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: target/release/jruby.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
         
@@ -53,5 +57,7 @@ jobs:
     - name: Release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: target/release/jruby
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
