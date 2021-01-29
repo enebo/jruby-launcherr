@@ -24,7 +24,7 @@ jobs:
         args: --makefile Makefile.toml frobnicate
     - name: Release
       uses: softprops/action-gh-release@v1
-      if: startsWith(github.ref, 'refs/tags/')
+      if: startsWith(github.ref, 'refs/tags/v')
       with:
         files: target/release/jruby_linux
       env:
@@ -42,7 +42,7 @@ jobs:
         args: --release --all-features
     - name: Release
       uses: softprops/action-gh-release@v1
-      if: startsWith(github.ref, 'refs/tags/')
+      if: startsWith(github.ref, 'refs/tags/v')
       with:
         files: target/release/jruby.exe
       env:
@@ -64,7 +64,7 @@ jobs:
         args: --makefile Makefile.toml frobnicate
     - name: Release
       uses: softprops/action-gh-release@v1
-      if: startsWith(github.ref, 'refs/tags/')
+      if: startsWith(github.ref, 'refs/tags/v')
       with:
         files: target/release/jruby_macos
       env:
