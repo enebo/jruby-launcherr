@@ -13,13 +13,15 @@ codegen-units = 1
 panic = 'abort'
 
 [dependencies]
-bindings = { path = "bindings" }
 log = { version = "0.4.5", features = ["std"] }
 libc = "0.2.67"
 nix = "0.19.1"
 process_path = "0.1.3"
 sys-info = "0.8.0"
 windows = "0.2.1"
+
+[target.'cfg(windows)'.dependencies]
+bindings = { path = "bindings" }
 
 [build-dependencies]
 windows = "0.2.1"

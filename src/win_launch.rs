@@ -12,7 +12,7 @@ use bindings::windows::win32::windows_programming::CloseHandle;
 use bindings::windows::win32::windows_programming::PROCESS_CREATION_FLAGS;
 use bindings::windows::win32::debug::GetLastError;
 
-use log::error;
+use log::{error, info};
 use std::ffi::OsStr;
 use std::iter::once;
 use std::ptr;
@@ -50,7 +50,7 @@ pub fn execute_with_create_process(mut command: String, args: Vec<String>) -> u3
     let command_line = quote_vec(command_line);
     let mut command_line_wide: Vec<u16> = OsStr::new(&command_line).encode_wide().chain(once(0)).collect();
 
-    println!("EXECUTING: {}", command_line);
+    info!("EXECUTING: {}", command_line);
     unsafe {
         if CreateProcessW(ptr::null_mut(),
                           command_line_wide.as_mut_ptr(),

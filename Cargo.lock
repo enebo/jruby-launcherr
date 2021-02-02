@@ -117,8 +117,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd25036021b0de88a0aff6b850051563c6516d0bf53f8638938edbb9de732736"
 
 [[package]]
-name = "jruby-launcherr"
-version = "0.1.0"
+name = "jruby"
+version = "0.1.6"
 dependencies = [
  "bindings",
  "libc",

@@ -12,7 +12,7 @@ use std::env;
 use std::error::Error;
 use std::io::{stderr, Write};
 
-const IS_SIXTY_FOUR: bool = cfg!(target_pointer_width = "64");
+//const IS_SIXTY_FOUR: bool = cfg!(target_pointer_width = "64");
 
 fn print_error(err: Box<dyn Error>) {
     let mut err = err.as_ref();
@@ -58,8 +58,6 @@ fn main() {
         print_error(err);
         std::process::exit(1);
     }
-
-    println!("IS 64 Bits: {}", IS_SIXTY_FOUR);
 
     let mut options = options.unwrap();
     if options.nailgun_client {
