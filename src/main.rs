@@ -1,3 +1,4 @@
+#![windows_subsystem = "console"]
 extern crate log;
 extern crate sys_info;
 
@@ -5,10 +6,13 @@ pub mod environment;
 pub mod file_helper;
 pub mod file_logger;
 pub mod launch_options;
+pub mod win_launch;
 
 use std::env;
 use std::error::Error;
 use std::io::{stderr, Write};
+
+const IS_SIXTY_FOUR: bool = cfg!(target_pointer_width = "64");
 
 fn print_error(err: Box<dyn Error>) {
     let mut err = err.as_ref();
@@ -21,13 +25,12 @@ fn print_error(err: Box<dyn Error>) {
 
 #[cfg(target_os = "windows")]
 fn execute(command: String, args: Vec<String>) {
-    use std::process::Command;
+    use win_launch::execute_with_create_process;
 
-    // Old launcher spawns command suspended and then disbles parents control-c then resumes after that point
-    Command::new(command)
-        .args(args)
-        .spawn().unwrap()
-        .wait().expect("The child to end");
+    let ret_code = execute_with_create_process(command, args);
+    if ret_code != 0 {
+        std::process::exit(ret_code as i32);
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -56,19 +59,16 @@ fn main() {
         std::process::exit(1);
     }
 
+    println!("IS 64 Bits: {}", IS_SIXTY_FOUR);
+
     let mut options = options.unwrap();
     if options.nailgun_client {
         options.program_args.insert(0, "org.jruby.util.NailMain".to_string());
-        if options.command_only {
-            println!("{:?}", options.program_args);
-        } else {
-            execute(options.java_location.clone().unwrap().to_str().unwrap().to_string(), options.command_line());
-        }
+    }
+
+    if options.command_only {
+        println!("{:?}", options.program_args);
     } else {
-        if options.command_only {
-            println!("{:?} {:?}", &options.java_location, options.command_line());
-        } else {
-            execute(options.java_location.clone().unwrap().to_str().unwrap().to_string(), options.command_line());
-        }
+        execute(options.java_location.clone().unwrap().to_str().unwrap().to_string(), options.command_line());
     }
 }

@@ -24,6 +24,9 @@ pub const DEV_MODE_JAVA_OPTIONS: [&str; 4] = [
 pub const JAVA_NAME: &str = "java.exe";
 
 #[cfg(target_os = "windows")]
+pub const JAVAW_NAME: &str = "javaw.exe";
+
+#[cfg(target_os = "windows")]
 pub const SHELL: &str = "cmd.exe";
 
 #[cfg(not(windows))]
@@ -304,7 +307,7 @@ impl LaunchOptions {
         // construct_boot_classpath
         let lib_dir = PathBuf::from(&platform_dir).join("lib");
         let jruby_complete_jar = lib_dir.clone().join("jruby-complete.jar");
-        let jruby_jar = lib_dir.join("lib").join("jruby.jar");
+        let jruby_jar = lib_dir.join("jruby.jar");
 
         if jruby_jar.exists() {
             self.add_to_boot_class_path(jruby_jar, true);
@@ -429,6 +432,7 @@ impl LaunchOptions {
         }
 
         if only_if_exists && !path.exists() {
+            info!("boot class path does not exist: {:?}", &path);
             return;
         }
 
