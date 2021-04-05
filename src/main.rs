@@ -6,10 +6,12 @@ pub mod file_helper;
 pub mod file_logger;
 pub mod launch_options;
 #[cfg(target_os = "windows")] pub mod win_launch;
+pub mod os_string_ext;
 
 use std::env;
 use std::error::Error;
 use std::io::{stderr, Write};
+use std::ffi::OsString;
 
 //const IS_SIXTY_FOUR: bool = cfg!(target_pointer_width = "64");
 
@@ -23,7 +25,7 @@ fn print_error(err: Box<dyn Error>) {
 }
 
 #[cfg(target_os = "windows")]
-fn execute(command: String, args: Vec<String>) {
+fn execute(command: OsString, args: Vec<OsString>) {
     use win_launch::execute_with_create_process;
 
     let ret_code = execute_with_create_process(command, args);
@@ -33,7 +35,7 @@ fn execute(command: String, args: Vec<String>) {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn execute(command: String,  args: Vec<String>) {
+fn execute(command: OsString,  args: Vec<OsString>) {
     use std::ffi::CString;
     use nix::unistd::execv;
 
@@ -51,7 +53,7 @@ fn execute(command: String,  args: Vec<String>) {
 }
 
 fn main() {
-    let options = launch_options::new(env::args().collect());
+    let options = launch_options::new(env::args_os().collect());
 
     if let Err(err) = options {
         print_error(err);
@@ -60,12 +62,12 @@ fn main() {
 
     let mut options = options.unwrap();
     if options.nailgun_client {
-        options.program_args.insert(0, "org.jruby.util.NailMain".to_string());
+        options.program_args.insert(0, OsString::from("org.jruby.util.NailMain"));
     }
 
     if options.command_only {
         println!("{:?}", options.program_args);
     } else {
-        execute(options.java_location.clone().unwrap().to_str().unwrap().to_string(), options.command_line());
+        execute(options.java_location.clone().unwrap().into_os_string(), options.command_line());
     }
 }

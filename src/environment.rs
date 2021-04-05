@@ -4,6 +4,7 @@ use log::{error, info};
 use crate::launch_options::LaunchError;
 use crate::file_helper::find_from_path;
 use std::error::Error;
+use std::ffi::OsString;
 use process_path::get_executable_path;
 
 /// Represents a wrapper around accessing the actual OS environment.
@@ -14,35 +15,35 @@ use process_path::get_executable_path;
 /// is small and it gains testability.
 ///
 pub struct Environment {
-    pub args: Vec<String>,
-    pub classpath: Option<String>,
+    pub args: Vec<OsString>,
+    pub classpath: Option<OsString>,
     pub current_dir: Option<PathBuf>,
-    pub java_cmd: Option<String>,
-    pub java_encoding: Option<String>,
-    pub java_home: Option<String>,
-    pub java_mem: Option<String>,
-    pub java_opts: Option<String>,
-    pub java_stack: Option<String>,
-    pub jruby_opts: Option<String>,
-    pub jruby_home: Option<String>,
-    pub path: Option<String>,
+    pub java_cmd: Option<OsString>,
+    pub java_encoding: Option<OsString>,
+    pub java_home: Option<OsString>,
+    pub java_mem: Option<OsString>,
+    pub java_opts: Option<OsString>,
+    pub java_stack: Option<OsString>,
+    pub jruby_opts: Option<OsString>,
+    pub jruby_home: Option<OsString>,
+    pub path: Option<OsString>,
 }
 
 impl Environment {
-    pub(crate) fn from_env(args: Vec<String>) -> Self {
+    pub(crate) fn from_env(args: Vec<OsString>) -> Self {
         Self {
             args,
-            classpath: env::var("CLASSPATH").ok(),
+            classpath: env::var_os("CLASSPATH"),
             current_dir: env::current_dir().ok(),
-            java_cmd: env::var("JAVACMD").ok(),
-            java_encoding: env::var("JAVA_ENCODING").ok(),
-            java_home: env::var("JAVA_HOME").ok(),
-            java_mem: env::var("JAVA_MEM").ok(),
-            java_opts: env::var("JAVA_OPTS").ok(),
-            java_stack: env::var("JAVA_STACK").ok(),
-            jruby_opts: env::var("JRUBY_OPTS").ok(),
-            jruby_home: env::var("JRUBY_HOME").ok(),
-            path: env::var("PATH").ok(),
+            java_cmd: env::var_os("JAVACMD"),
+            java_encoding: env::var_os("JAVA_ENCODING"),
+            java_home: env::var_os("JAVA_HOME"),
+            java_mem: env::var_os("JAVA_MEM"),
+            java_opts: env::var_os("JAVA_OPTS"),
+            java_stack: env::var_os("JAVA_STACK"),
+            jruby_opts: env::var_os("JRUBY_OPTS"),
+            jruby_home: env::var_os("JRUBY_HOME"),
+            path: env::var_os("PATH"),
         }
     }
 
@@ -64,9 +65,10 @@ impl Environment {
         info!("determining JRuby home");
 
         if let Some(java_opts) = &self.jruby_home {
-            info!("Found JRUBY_HOME = '{}'", java_opts);
-
             let dir = PathBuf::from(java_opts);
+
+            info!("Found JRUBY_HOME = '{:?}'", &dir);
+
             let jruby_bin = dir.join("bin");
             if exist_test(&jruby_bin) {
                 info!("Success: Found bin directory within JRUBY_HOME");
@@ -100,7 +102,7 @@ impl Environment {
     ///  2. CWD + relative path
     ///  3. Find in PATH + relative path
     ///  4. Go for broke...just return ARGV0 value itself.
-    fn derive_home_from_argv0<T>(&self, argv0: &PathBuf, path: &Option<String>, test: T) -> PathBuf where
+    fn derive_home_from_argv0<T>(&self, argv0: &PathBuf, path: &Option<OsString>, test: T) -> PathBuf where
         T: Fn(&PathBuf) -> bool {
         if argv0.is_absolute() {
             info!("Found absolute path for argv0");
@@ -157,7 +159,7 @@ mod tests {
         let argv0 = &absolute;
         let test = |f: &PathBuf| f.exists();
 
-        env.jruby_home = Some(traditional_home.into_os_string().into_string().unwrap());
+        env.jruby_home = Some(traditional_home.into_os_string());
 
         assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &absolute);
     }
@@ -183,7 +185,7 @@ mod tests {
         assert_eq!(env.derive_home_from_argv0(&argv0, &None, test).as_os_str(), &argv0);
 
         let test_home = absolute.clone();
-        let path = Some(traditional_home.into_os_string().into_string().unwrap());
+        let path = Some(traditional_home.into_os_string());
         let path_test = |t: &PathBuf| t == &test_home;
 
         assert_eq!(env.derive_home_from_argv0(&argv0, &path, path_test).as_os_str(), &absolute);
