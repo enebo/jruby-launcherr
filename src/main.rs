@@ -5,7 +5,7 @@ pub mod environment;
 pub mod file_helper;
 pub mod file_logger;
 pub mod launch_options;
-#[cfg(target_os = "windows")] pub mod win_launch;
+#[cfg(windows)] pub mod win_launch;
 pub mod os_string_ext;
 
 use std::env;

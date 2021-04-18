@@ -1,17 +1,21 @@
 fn main() {
     windows::build!(
-        windows::win32::system_services::CreateProcessW
-        windows::win32::system_services::GetConsoleWindow
-        windows::win32::system_services::GetExitCodeProcess
-        windows::win32::system_services::INFINITE
-        windows::win32::system_services::PROCESS_INFORMATION
-        windows::win32::system_services::ResumeThread
-        windows::win32::system_services::SetConsoleCtrlHandler
-        windows::win32::system_services::STARTUPINFOW
-        windows::win32::system_services::WaitForSingleObject
-        windows::win32::windows_and_messaging::HWND
-        windows::win32::windows_programming::CloseHandle
-        windows::win32::windows_programming::PROCESS_CREATION_FLAGS
-        windows::win32::debug::GetLastError
+        Windows::Win32::SystemServices::BOOL,
+        Windows::Win32::SystemServices::CreateProcessW,
+        Windows::Win32::SystemServices::GetCommandLineW,
+        Windows::Win32::SystemServices::GetConsoleWindow,
+        Windows::Win32::SystemServices::GetExitCodeProcess,
+        Windows::Win32::SystemServices::PROCESS_INFORMATION,
+        Windows::Win32::SystemServices::PWSTR,
+        Windows::Win32::SystemServices::ResumeThread,
+        Windows::Win32::SystemServices::SetConsoleCtrlHandler,
+        Windows::Win32::SystemServices::STARTUPINFOW,
+        Windows::Win32::SystemServices::WaitForSingleObject,
+        Windows::Win32::WindowsAndMessaging::HWND,
+        Windows::Win32::WindowsProgramming::CloseHandle,
+        Windows::Win32::WindowsProgramming::INFINITE,
+        Windows::Win32::WindowsProgramming::PROCESS_CREATION_FLAGS,
+        Windows::Win32::WindowsProgramming::uaw_wcslen,
+        Windows::Win32::Debug::GetLastError
     );
 }

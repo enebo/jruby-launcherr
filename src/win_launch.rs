@@ -1,16 +1,20 @@
-use bindings::windows::win32::system_services::CreateProcessW;
-use bindings::windows::win32::system_services::GetConsoleWindow;
-use bindings::windows::win32::system_services::GetExitCodeProcess;
-use bindings::windows::win32::system_services::INFINITE;
-use bindings::windows::win32::system_services::PROCESS_INFORMATION;
-use bindings::windows::win32::system_services::ResumeThread;
-use bindings::windows::win32::system_services::SetConsoleCtrlHandler;
-use bindings::windows::win32::system_services::STARTUPINFOW;
-use bindings::windows::win32::system_services::WaitForSingleObject;
-use bindings::windows::win32::windows_and_messaging::HWND;
-use bindings::windows::win32::windows_programming::CloseHandle;
-use bindings::windows::win32::windows_programming::PROCESS_CREATION_FLAGS;
-use bindings::windows::win32::debug::GetLastError;
+use bindings::Windows::Win32::SystemServices::BOOL;
+use bindings::Windows::Win32::SystemServices::CreateProcessW;
+use bindings::Windows::Win32::SystemServices::GetCommandLineW;
+use bindings::Windows::Win32::SystemServices::GetConsoleWindow;
+use bindings::Windows::Win32::SystemServices::GetExitCodeProcess;
+use bindings::Windows::Win32::SystemServices::PROCESS_INFORMATION;
+use bindings::Windows::Win32::SystemServices::PWSTR;
+use bindings::Windows::Win32::SystemServices::ResumeThread;
+use bindings::Windows::Win32::SystemServices::SetConsoleCtrlHandler;
+use bindings::Windows::Win32::SystemServices::STARTUPINFOW;
+use bindings::Windows::Win32::SystemServices::WaitForSingleObject;
+use bindings::Windows::Win32::WindowsAndMessaging::HWND;
+use bindings::Windows::Win32::WindowsProgramming::CloseHandle;
+use bindings::Windows::Win32::WindowsProgramming::INFINITE;
+use bindings::Windows::Win32::WindowsProgramming::PROCESS_CREATION_FLAGS;
+use bindings::Windows::Win32::WindowsProgramming::uaw_wcslen;
+use bindings::Windows::Win32::Debug::GetLastError;
 
 use log::{error, info};
 use std::ffi::{OsStr, OsString};
@@ -19,6 +23,15 @@ use std::ptr;
 use std::os::windows::ffi::OsStrExt;
 use crate::launch_options::{JAVA_NAME, JAVAW_NAME};
 use crate::os_string_ext::OsStringExt;
+use widestring::U16String;
+
+pub(crate) fn rawCommandLine() -> OsString {
+    let ptr = unsafe { GetCommandLineW() };
+    let length: usize = unsafe { uaw_wcslen(ptr.0 as *mut u16) };
+    let str = unsafe {U16String::from_ptr(ptr.0 as *mut u16, length) };
+
+    str.to_os_string()
+}
 
 pub fn join(vector: Vec<OsString>, delimeter: &str) -> OsString {
     let mut new_string = OsString::new();
@@ -68,33 +81,35 @@ pub fn execute_with_create_process(mut command: OsString, args: Vec<OsString>) -
     command_line.extend(args);
     let command_line = quote_vec(command_line);
     let mut command_line_wide: Vec<u16> = OsStr::new(&command_line).encode_wide().chain(once(0)).collect();
+    let mut c = PWSTR::default();
+    c.0 = command_line_wide.as_mut_ptr();
 
     info!("EXECUTING: {:?}", command_line);
     unsafe {
-        if CreateProcessW(ptr::null_mut(),
-                          command_line_wide.as_mut_ptr(),
+        if !CreateProcessW(PWSTR::default(),
+                          c,
                           ptr::null_mut(),
                           ptr::null_mut(),
-                          bindings::windows::BOOL::from(true),
+                          BOOL::from(true),
                           PROCESS_CREATION_FLAGS::CREATE_SUSPENDED,
                           ptr::null_mut(),
-                          ptr::null_mut(),
+                          PWSTR::default(),
                           si,
-                          pi).is_err() {
+                          pi).as_bool() {
             panic!("Could not launch process: {:?}", &command_line);
         }
 
-        if SetConsoleCtrlHandler(None, bindings::windows::BOOL::from(true)).is_err() {
+        if !SetConsoleCtrlHandler(None, BOOL::from(true)).as_bool() {
             error!("Could not set up console control handlers {}", GetLastError());
         }
 
         let pi = &*pi;
-        ResumeThread(pi.h_thread);
-        WaitForSingleObject(pi.h_process, INFINITE);
+        ResumeThread(pi.hThread);
+        WaitForSingleObject(pi.hProcess, INFINITE);
         let ret_code: *mut u32 = &mut 0;
-        GetExitCodeProcess(pi.h_process, ret_code);
-        CloseHandle(pi.h_process);
-        CloseHandle(pi.h_thread);
+        GetExitCodeProcess(pi.hProcess, ret_code);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
         (*ret_code).clone()
     }
 }
