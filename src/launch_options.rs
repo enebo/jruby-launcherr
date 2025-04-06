@@ -5,7 +5,8 @@ use std::ffi::OsString;
 use std::fmt::Formatter;
 use std::path::PathBuf;
 use std::{env, fs};
-
+use std::process::exit;
+use regex::Regex;
 use crate::environment::Environment;
 use crate::file_helper::find_from_path;
 use crate::file_logger;
@@ -28,6 +29,12 @@ pub const JAVA_NAME: &str = "java.exe";
 
 #[cfg(target_os = "windows")]
 pub const JAVAW_NAME: &str = "javaw.exe";
+
+#[cfg(target_os = "windows")]
+pub const JSA_DIR: &str = "bin";
+
+#[cfg(not(target_os = "windows"))]
+pub const JSA_DIR: &str = "lib";
 
 #[cfg(target_os = "windows")]
 pub const SHELL: &str = "-Djruby.shell=cmd.exe";
@@ -95,10 +102,23 @@ pub struct LaunchOptions {
     jruby_opts: Vec<OsString>,
     platform_dir: Option<PathBuf>,
     pub(crate) java_location: Option<PathBuf>,
+    pub(crate) java_home: Option<PathBuf>,
+    java_is_modular: bool,
+    java_version: String,
+    java_major_version: u16,
+    java_has_appcds: bool,
+    use_appcds: bool,
+    appcds_autogenerate: bool,
+    native_access: bool,
+    unsafe_memory: bool,
+    regenerate_jsa_file: bool,
     xss: Option<OsString>,
-    use_module_path: bool,
     boot_classpath: Vec<PathBuf>,
     suppress_console: bool,
+    use_jsa_file: bool,
+    remove_jsa_files: bool,
+    log_cds: bool,
+    jruby_jsa_file: Option<PathBuf>,
 }
 
 macro_rules! arg_value {
@@ -111,6 +131,39 @@ macro_rules! arg_value {
             }));
         }
     }};
+}
+
+fn grep(file: PathBuf, pattern: &str) -> Option<Vec<String>> {
+    let re = Regex::new(pattern).unwrap();
+    let contents = fs::read_to_string(file);
+
+    if contents.is_ok() {
+        let matches: Vec<String> = contents
+            .unwrap()
+            .lines()
+            .filter(|line| re.is_match(line))
+            .map(|line| line.to_string())
+            .collect();
+        return if matches.is_empty() {
+            None
+        } else {
+            Some(matches)
+        }
+    }
+
+    None
+}
+
+// Note: 1.8 parses as major version 1 but this is ok for the sake of anything we are doing.
+fn major_version(full_version: &str) -> u16 {
+    full_version.split('.').next().unwrap().parse::<u16>().unwrap()
+}
+
+fn is_newer(one: &PathBuf, two: &PathBuf) -> bool {
+    let time1 = fs::metadata(one).unwrap().modified().unwrap();
+    let time2 = fs::metadata(two).unwrap().modified().unwrap();
+
+    time1 > time2
 }
 
 impl LaunchOptions {
@@ -188,11 +241,23 @@ impl LaunchOptions {
                     self.java_args.push(OsString::from("-server"));
                     self.no_boot_classpath = true;
                 }
+                "--no-bootclasspath" => self.no_boot_classpath = true,
                 "-Jea" => {
                     self.java_args.push(OsString::from("-ea"));
                     self.no_boot_classpath = true;
                     println!("Note: -ea option is specified, there will be no bootclasspath in order to enable assertions")
                 }
+                // FIXME: Implement checkpoint
+                "--cache" => {
+                    if !self.java_has_appcds {
+                        println!("Error: Java {} doesn't support automatic AppCDS", self.java_major_version);
+                        exit(2);
+                    }
+                    self.regenerate_jsa_file = true;
+                }
+                "--nocache" => self.use_jsa_file = false,
+                "--rmcache" => self.remove_jsa_files = true,
+                "--logcache" => self.log_cds = true,
                 _ => {
                     if argument.len() > 2 {
                         let (two, rest) = argument.split_at(2);
@@ -240,9 +305,97 @@ impl LaunchOptions {
             find_from_path(JAVA_NAME, &env.path, |f| f.exists())
         };
 
+        // Panic on pathological env setting is ok here as the error should be explanatory.
+        if let Some(loc) = java.clone() {
+            let parent = loc.parent().unwrap().parent().unwrap();
+            info!("JAVA_HOME = {}", &parent.to_string_lossy());
+            self.java_home = Some(parent.to_owned());
+
+        }
+
+        self.java_is_modular = self.java_is_modular();
+        self.java_version = self.find_java_version();
+        self.java_major_version = major_version(self.java_version.as_str());
+        self.make_version_decisions();
+        self.java_has_appcds = self.java_has_appcds();
+        self.use_appcds = self.java_has_appcds;
+        self.use_jsa_file = self.use_appcds;
+        info!("MODULAR: {}", self.java_is_modular);
+        info!("VERSION: {}", self.java_version);
+        info!("MAJOR_VERSION: {}", self.java_major_version);
+        info!("Java has CDS: {}", self.java_has_appcds);
+
         // FIXME: Seemingly if not found on path we should probably just exit with an error here.
         self.java_location = java;
+
+
         Ok(())
+    }
+
+    fn make_version_decisions(&mut self) {
+        self.appcds_autogenerate = self.java_major_version >= 19;
+        self.native_access = self.java_major_version >= 22;
+        self.unsafe_memory = self.java_major_version >= 23;
+
+
+        info!("APPCDS auto generate: {}", self.appcds_autogenerate);
+        info!("Native access: {}", self.native_access);
+        info!("Unsafe memory: {}", self.unsafe_memory);
+    }
+
+    fn java_is_modular(&self) -> bool {
+        let java_home = self.java_home.to_owned().unwrap();
+
+        java_home.join("lib").join("modules").exists()
+            || java_home.join("release").exists()
+    }
+
+    fn find_java_version(&mut self) -> String {
+        let java_home = self.java_home.to_owned().unwrap();
+
+        let release_file = java_home.clone().join("release");
+        if release_file.exists() {
+            let lines = grep(release_file, "^JAVA_VERSION=");
+
+            if lines.is_some() {
+                let lines = lines.unwrap();
+                if !lines.is_empty() {
+                    let line = lines.first().unwrap();
+                    let re = Regex::new(r"JAVA_VERSION=\s*\D*([\d.]+)");
+                    if re.is_ok() {
+                        let re = re.unwrap();
+                        info!("ok re: {}", re);
+                        let captures = re.captures(line);
+                        if captures.is_some() {
+                            let capture = captures.unwrap().get(1);
+                            if capture.is_some() {
+                                return capture.unwrap().as_str().to_string();
+                            }
+                        }
+                    }
+                }
+            }
+
+        }
+
+        panic!("Cannot determine java version");
+    }
+
+    fn java_has_appcds(&mut self) -> bool {
+        let java_home = self.java_home.to_owned().unwrap();
+        let server_dir = java_home.clone().join(JSA_DIR).join("server");
+
+        if server_dir.exists() && fs::metadata(&server_dir).unwrap().is_dir() {
+            let entries = fs::read_dir(server_dir)
+                .unwrap()
+                .map(|res| res.map(|e| e.path()));
+
+            return entries
+                .filter(|e| e.is_ok())
+                .any(|f| f.unwrap().to_string_lossy().ends_with(".jsa"));
+        }
+
+        false
     }
 
     fn prepare_options(&mut self, env: &Environment) -> Result<(), Box<dyn Error>> {
@@ -253,61 +406,18 @@ impl LaunchOptions {
         }
 
         let platform_dir = self.platform_dir.to_owned().unwrap();
+        info!("Platform dir = {:?}", platform_dir);
 
         java_options.push(OsString::from("-Djruby.home=".to_string() + platform_dir.to_str().unwrap()));
         java_options.push(OsString::from("-Djruby.script=jruby"));
         java_options.push(OsString::from(SHELL));
 
-        let mut jni_dir = platform_dir.clone().join("lib").join("jni");
-
-        info!("JNI DIR: {:?}, {}", jni_dir, jni_dir.exists());
-        if !jni_dir.exists() {
-            jni_dir = platform_dir.clone().join("lib").join("native");
-            if !jni_dir.exists() {
-                return Err(Box::new(LaunchError {
-                    message: "unable to find JNI dir",
-                }));
-            }
-        }
-
-        let os_name = sys_info::os_type().unwrap();
-        let entries = fs::read_dir(&jni_dir)
-            .unwrap()
-            .filter_map(|entry| -> Option<PathBuf> {
-                let path = &entry.unwrap().path().to_str().unwrap().to_owned();
-
-                if path.contains(&os_name) {
-                    Some(PathBuf::from(path))
-                } else {
-                    None
-                }
-            });
-
-        let mut paths: Vec<PathBuf> = vec![jni_dir];
-        paths.extend(entries);
-
-        let paths = env::join_paths(paths)?;
-
-        if !paths.is_empty() {
-            info!("found paths: {}", paths.to_str().unwrap());
-            java_options.push(OsString::from("-Djffi.boot.library.path=".to_string() + paths.to_str().unwrap()));
-        }
+        let jni_dir = platform_dir.clone().join("lib").join("jni");
+        java_options.push(OsString::from("-Djffi.boot.library.path=".to_string() + jni_dir.to_str().unwrap()));
 
         if self.xss.is_none() {
             info!("No explicit xss. Defaulting to: {}", XSS_DEFAULT);
             java_options.push(OsString::from(XSS_DEFAULT_OPT));
-        }
-
-        if self.jdk_home.is_none() {
-            info!("No Java home detected.  Cannot check for JPMS.");
-        } else {
-            let jmods =
-                PathBuf::from(self.jdk_home.as_ref().unwrap().to_str().unwrap()).join("jmods");
-
-            if jmods.exists() {
-                info!("jmods directory found in Java home.  Set up module support");
-                self.use_module_path = true;
-            }
         }
 
         // construct_boot_classpath
@@ -366,7 +476,7 @@ impl LaunchOptions {
         if !self.boot_classpath.is_empty() {
             let path = env::join_paths(self.boot_classpath.iter()).unwrap();
 
-            if self.use_module_path {
+            if self.java_is_modular {
                 let mut module_path = OsString::from("--module-path=");
                 module_path.push(path);
                 java_options.push(module_path);
@@ -377,7 +487,7 @@ impl LaunchOptions {
             }
         }
 
-        if self.use_module_path {
+        if self.java_is_modular {
             let bin_options_file: PathBuf = ["bin", ".jruby.module_opts"].iter().collect();
             let module_options_file = self.platform_dir.as_ref().unwrap().join(bin_options_file);
             info!("MOF: {:?}", module_options_file);
@@ -399,6 +509,86 @@ impl LaunchOptions {
                 java_options.push(OsString::from("--add-opens"));
                 java_options.push(OsString::from("java.management/sun.management=org.jruby.dist"));
             }
+        }
+
+        let jsa_file = self.platform_dir.clone().unwrap()
+            .join("lib")
+            .join("jruby-java".to_string() + &self.java_version + ".jsa");
+        if env.jruby_jsa_file.is_some() {
+            self.jruby_jsa_file = Some(PathBuf::from(env.jruby_jsa_file.clone().unwrap()));
+        } else {
+
+            if jsa_file.exists() {
+                self.jruby_jsa_file = Some(self.platform_dir.clone().unwrap().join("lib").join(jsa_file.clone()));
+            } else {
+                self.jruby_jsa_file = None;
+            }
+        }
+
+        if self.jruby_jsa_file.is_some() {
+            // FIXME: This writable check does not work and it likely was wrong regardless since it just checked readonly without ownership
+            /*
+            if self.use_jsa_file && fs::metadata(self.jruby_jsa_file.clone().unwrap()).unwrap().permissions().readonly() {
+                println!("Warning: AppCDS archive directory is not writable, disabling AppCDS operations");
+                self.regenerate_jsa_file = false;
+                self.remove_jsa_files = false;
+                self.use_jsa_file = false;
+            }*/
+        } else {
+            self.jruby_jsa_file = Some(self.platform_dir.clone().unwrap().join("lib").join(jsa_file));
+        }
+
+        if self.use_jsa_file {
+            // FIXME: add bare -e1 for no arg regeneration
+
+            if self.regenerate_jsa_file {
+                let jruby_jar = PathBuf::from(&platform_dir).join("lib").join("jruby.jar");
+
+                self.regenerate_jsa_file = is_newer(&jruby_jar, &self.jruby_jsa_file.clone().unwrap());
+            }
+
+            if self.appcds_autogenerate {
+                java_options.push(OsString::from("-XX:+AutoCreateSharedArchive"));
+
+                info!("");
+                info!("Automatically generating and using CDS archive at:");
+                info!("   {:?}", self.jruby_jsa_file.clone().unwrap());
+            }
+
+            if self.regenerate_jsa_file && !self.appcds_autogenerate {
+               java_options.push(OsString::from("-XX:ArchiveClassesAtExit=".to_string() + &self.jruby_jsa_file.clone().unwrap().to_str().unwrap()));
+
+                info!("");
+                info!("Regenerating CDS archive at:");
+                info!("   {:?}", self.jruby_jsa_file.clone().unwrap());
+            } else {
+                java_options.push(OsString::from("-XX:SharedArchiveFile=".to_string() + &self.jruby_jsa_file.clone().unwrap().to_str().unwrap()));
+
+                if !self.appcds_autogenerate {
+                    info!("");
+                    info!("Using CDS archive at:");
+                    info!("   {:?}", self.jruby_jsa_file.clone().unwrap());
+                }
+            }
+
+            if self.log_cds {
+                info!("Logging CDS output to:");
+                info!("   {:?}", self.jruby_jsa_file.clone().unwrap());
+
+                java_options.push(OsString::from("-Xlog:cds=info:file=".to_string() + &self.jruby_jsa_file.clone().unwrap().to_str().unwrap() + ".log"));
+                java_options.push(OsString::from("-Xlog:cds+dynamic=info:file=".to_string() + &self.jruby_jsa_file.clone().unwrap().to_str().unwrap() + ".log"));
+            } else {
+                java_options.push(OsString::from("-Xlog:cds=off"));
+                java_options.push(OsString::from("-Xlog:cds+dynamic=off"));
+            }
+        }
+
+        if self.native_access {
+            java_options.push(OsString::from("--enable-native-access=org.jruby.dist"));
+        }
+
+        if self.unsafe_memory {
+            java_options.push(OsString::from("--sun-misc-unsafe-memory-access=allow"));
         }
 
         let class_path = env::join_paths(self.classpath.iter())?;

@@ -23,14 +23,74 @@ use std::ptr;
 use std::os::windows::ffi::OsStrExt;
 use crate::launch_options::{JAVA_NAME, JAVAW_NAME};
 use crate::os_string_ext::OsStringExt;
+use std::os::windows::ffi::OsStringExt as SysOsStringExt;
 use widestring::U16String;
 
-pub(crate) fn rawCommandLine() -> OsString {
+fn rawCommandLine() -> Vec<u16> {
     let ptr = unsafe { GetCommandLineW() };
     let length: usize = unsafe { uaw_wcslen(ptr.0 as *mut u16) };
     let str = unsafe {U16String::from_ptr(ptr.0 as *mut u16, length) };
 
-    str.to_os_string()
+    str.into_vec()
+}
+
+const BACKSLASH: u16 = b'\\' as u16;
+const DOUBLE_QUOTE: u16 = b'\"' as u16;
+const LEFT_BRACKET: u16 = b'[' as u16;
+const LEFT_CURLY: u16 = b'{' as u16;
+const NEWLINE: u16 = b'\n' as u16;
+const QUESTION: u16 = b'?' as u16;
+const SINGLE_QUOTE: u16 = b'\'' as u16;
+const SPACE: u16 = b' ' as u16;
+const STAR: u16 = b'*' as u16;
+const TAB: u16 = b'\t' as u16;
+
+pub fn commandLine(line: Vec<u16>) -> Vec<OsString> {
+    let mut slashes = false;
+    let mut escape = false;
+    let mut quote: u16 = 0 as u16;
+    let mut args: Vec<OsString> = vec![];
+    let mut start: usize = 0;
+    let mut glob: usize = 0;
+
+    for (i, c) in line.iter().enumerate() {
+        match *c {
+            BACKSLASH => {
+                if quote != SINGLE_QUOTE {
+                    slashes = true;
+                }
+            },
+            SPACE | TAB | NEWLINE=> {
+                if quote == 0 {
+                    args.push(OsString::from_wide(&line[start..i]));
+                }
+            },
+            LEFT_BRACKET | LEFT_CURLY | STAR | QUESTION => {
+                if quote != SINGLE_QUOTE {
+                    glob += 1;
+                }
+                slashes = false;
+            },
+            SINGLE_QUOTE | DOUBLE_QUOTE => {
+                if !slashes {
+                    if quote == 0 {
+                        quote = *c;
+                    } else if quote == *c {
+                        //if quote == DOUBLE_QUOTE && quote == line[i + 1] {
+                        //    advance_c();
+                        //}
+                        quote = 0;
+                    }
+                }
+                escape = true;
+                slashes = false;
+            },
+            _ => slashes = false,
+        }
+    }
+
+    println!("ARGS: {:?}", args);
+    args
 }
 
 pub fn join(vector: Vec<OsString>, delimeter: &str) -> OsString {

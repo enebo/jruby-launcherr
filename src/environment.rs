@@ -26,6 +26,7 @@ pub struct Environment {
     pub java_stack: Option<OsString>,
     pub jruby_opts: Option<OsString>,
     pub jruby_home: Option<OsString>,
+    pub jruby_jsa_file: Option<OsString>,
     pub path: Option<OsString>,
 }
 
@@ -44,6 +45,7 @@ impl Environment {
             jruby_opts: env::var_os("JRUBY_OPTS"),
             jruby_home: env::var_os("JRUBY_HOME"),
             path: env::var_os("PATH"),
+            jruby_jsa_file: env::var_os("JRUBY_JSA"),
         }
     }
 
@@ -148,6 +150,7 @@ mod tests {
             jruby_opts: None,
             jruby_home: None,
             path: None,
+            jruby_jsa_file: None,
         }
     }
 
