@@ -1,10 +1,10 @@
 use core::fmt;
 use log::{error, info, warn};
 use std::error::Error;
-use std::ffi::OsString;
 use std::fmt::Formatter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{env, fs};
+use std::ffi::OsString;
 use std::process::exit;
 use regex::Regex;
 use crate::environment::Environment;
@@ -73,7 +73,7 @@ pub fn new(args: Vec<OsString>) -> Result<LaunchOptions, Box<dyn Error>> {
     };
 
     let executable = env.determine_jruby_executable(|f| f.exists())?;
-    options.platform_dir = Some(executable.ancestors().take(3).collect());
+    options.jruby_home = Some(executable.ancestors().take(3).collect());
     info!("launch_options = {:?}", options);
     options.determine_java_location(&env)?;
     info!("launch_options = {:?}", options);
@@ -100,7 +100,7 @@ pub struct LaunchOptions {
     pub(crate) program_args: Vec<OsString>,
     java_opts: Vec<OsString>,
     jruby_opts: Vec<OsString>,
-    platform_dir: Option<PathBuf>,
+    jruby_home: Option<PathBuf>,
     pub(crate) java_location: Option<PathBuf>,
     pub(crate) java_home: Option<PathBuf>,
     java_is_modular: bool,
@@ -164,6 +164,14 @@ fn is_newer(one: &PathBuf, two: &PathBuf) -> bool {
     let time2 = fs::metadata(two).unwrap().modified().unwrap();
 
     time1 > time2
+}
+
+fn dir_builder<P: AsRef<Path>>(path: PathBuf, subdirs: Vec<P>) -> PathBuf {
+    let mut path = path;
+    for subdir in subdirs {
+        path = path.join(subdir);
+    }
+    path
 }
 
 impl LaunchOptions {
@@ -267,10 +275,7 @@ impl LaunchOptions {
                         match two {
                             "-X" if rest.starts_with(OsString::from("xss")) => self.xss = Some(argument),
                             "-X" if rest.to_string_lossy().chars().next().unwrap().is_ascii_lowercase() => {
-                                // unwrap safe 3+ chars at this point
-                                let mut property = OsString::from("-Djruby.".to_string());
-                                property.push(rest);
-                                self.java_args.push(property)
+                                self.java_args.push(OsString::from(format!("-Djruby.{:?}", rest)));
                             }
                             "-J" => self.java_args.push(rest),
                             _ => self.program_args.push(argument),
@@ -308,13 +313,19 @@ impl LaunchOptions {
         // Panic on pathological env setting is ok here as the error should be explanatory.
         if let Some(loc) = java.clone() {
             let parent = loc.parent().unwrap().parent().unwrap();
-            info!("JAVA_HOME = {}", &parent.to_string_lossy());
+            info!("JAVA_HOME = {}", &parent.display());
             self.java_home = Some(parent.to_owned());
 
         }
 
         self.java_is_modular = self.java_is_modular();
-        self.java_version = self.find_java_version();
+
+        if let Some(version) = self.find_java_version() {
+            self.java_version = version
+        } else {
+            panic!("Cannot determine a Java home directory");
+        }
+
         self.java_major_version = major_version(self.java_version.as_str());
         self.make_version_decisions();
         self.java_has_appcds = self.java_has_appcds();
@@ -344,46 +355,38 @@ impl LaunchOptions {
     }
 
     fn java_is_modular(&self) -> bool {
-        let java_home = self.java_home.to_owned().unwrap();
-
-        java_home.join("lib").join("modules").exists()
-            || java_home.join("release").exists()
+        self.java_home(vec!["lib", "modules"]).exists()
+            || self.java_home(vec!["release"]).exists()
     }
 
-    fn find_java_version(&mut self) -> String {
-        let java_home = self.java_home.to_owned().unwrap();
+    fn java_home<P: AsRef<Path>>(&self, subdirs: Vec<P>) -> PathBuf {
+        dir_builder(self.java_home.to_owned().unwrap(), subdirs)
+    }
 
-        let release_file = java_home.clone().join("release");
+    fn jruby_home<P: AsRef<Path>>(&self, subdirs: Vec<P>) -> PathBuf {
+        dir_builder(self.jruby_home.to_owned().unwrap(), subdirs)
+    }
+
+    fn find_java_version(&mut self) -> Option<String> {
+        let release_file = self.java_home(vec!["release"]);
+
         if release_file.exists() {
-            let lines = grep(release_file, "^JAVA_VERSION=");
-
-            if lines.is_some() {
-                let lines = lines.unwrap();
+            if let Some(lines) = grep(release_file, "^JAVA_VERSION=") {
                 if !lines.is_empty() {
+                    let re = Regex::new(r"JAVA_VERSION=\s*\D*([\d.]+)").unwrap();
                     let line = lines.first().unwrap();
-                    let re = Regex::new(r"JAVA_VERSION=\s*\D*([\d.]+)");
-                    if re.is_ok() {
-                        let re = re.unwrap();
-                        info!("ok re: {}", re);
-                        let captures = re.captures(line);
-                        if captures.is_some() {
-                            let capture = captures.unwrap().get(1);
-                            if capture.is_some() {
-                                return capture.unwrap().as_str().to_string();
-                            }
-                        }
+                    if let Some(capture) = re.captures(line).map(|c| c.get(1)) {
+                        return capture.map(|m| m.as_str().to_string());
                     }
                 }
             }
-
         }
 
-        panic!("Cannot determine java version");
+        None
     }
 
     fn java_has_appcds(&mut self) -> bool {
-        let java_home = self.java_home.to_owned().unwrap();
-        let server_dir = java_home.clone().join(JSA_DIR).join("server");
+        let server_dir = self.java_home(vec![JSA_DIR, "server"]);
 
         if server_dir.exists() && fs::metadata(&server_dir).unwrap().is_dir() {
             let entries = fs::read_dir(server_dir)
@@ -402,18 +405,18 @@ impl LaunchOptions {
         let mut java_options: Vec<OsString> = self.java_opts.clone();
 
         if let Some(jdk_home) = &self.jdk_home {
-            java_options.push(OsString::from("-Djdk.home=".to_string() + jdk_home.to_str().unwrap()));
+            java_options.push(OsString::from(format!("-Djdk.home={}", jdk_home.display())));
         }
 
-        let platform_dir = self.platform_dir.to_owned().unwrap();
-        info!("Platform dir = {:?}", platform_dir);
+        let jruby_home = self.jruby_home.to_owned().unwrap();
+        info!("JRuby home = {}", jruby_home.display());
 
-        java_options.push(OsString::from("-Djruby.home=".to_string() + platform_dir.to_str().unwrap()));
+        java_options.push(OsString::from(format!("-Djruby.home={}", jruby_home.display())));
         java_options.push(OsString::from("-Djruby.script=jruby"));
         java_options.push(OsString::from(SHELL));
 
-        let jni_dir = platform_dir.clone().join("lib").join("jni");
-        java_options.push(OsString::from("-Djffi.boot.library.path=".to_string() + jni_dir.to_str().unwrap()));
+        let jni_dir = self.jruby_home(vec!["lib", "jni"]);
+        java_options.push(OsString::from(format!("-Djffi.boot.library.path={}", jni_dir.display())));
 
         if self.xss.is_none() {
             info!("No explicit xss. Defaulting to: {}", XSS_DEFAULT);
@@ -421,9 +424,8 @@ impl LaunchOptions {
         }
 
         // construct_boot_classpath
-        let lib_dir = PathBuf::from(&platform_dir).join("lib");
-        let jruby_complete_jar = lib_dir.clone().join("jruby-complete.jar");
-        let jruby_jar = lib_dir.join("jruby.jar");
+        let jruby_complete_jar = self.jruby_home(vec!["lib", "jruby-complete.jar"]);
+        let jruby_jar = self.jruby_home(vec!["lib", "jruby.jar"]);
 
         if jruby_jar.exists() {
             self.add_to_boot_class_path(jruby_jar, true);
@@ -488,16 +490,12 @@ impl LaunchOptions {
         }
 
         if self.java_is_modular {
-            let bin_options_file: PathBuf = ["bin", ".jruby.module_opts"].iter().collect();
-            let module_options_file = self.platform_dir.as_ref().unwrap().join(bin_options_file);
-            info!("MOF: {:?}", module_options_file);
+            let module_opts = self.jruby_home(vec!["bin", ".jruby.module_opts"]);
+            info!("MOF: {:?}", module_opts);
 
-            if module_options_file.exists() {
-                info!(
-                    "Found module options file {:?}.  Using that.",
-                    module_options_file
-                );
-                java_options.push(OsString::from("@".to_string() + module_options_file.to_str().unwrap()));
+            if module_opts.exists() {
+                info!("Found module options file {:?}.  Using that.", module_opts);
+                java_options.push(OsString::from(format!("@{}", module_opts.display())));
             } else {
                 info!("Found no module options file.  Use hard-coded values.");
                 java_options.push(OsString::from("--add-opens"));
@@ -511,22 +509,19 @@ impl LaunchOptions {
             }
         }
 
-        let jsa_file = self.platform_dir.clone().unwrap()
-            .join("lib")
-            .join("jruby-java".to_string() + &self.java_version + ".jsa");
-        if env.jruby_jsa_file.is_some() {
-            self.jruby_jsa_file = Some(PathBuf::from(env.jruby_jsa_file.clone().unwrap()));
+        let jsa_file_name = format!("jruby-java{}.jsa", &self.java_version);
+        let jsa_file_name = jsa_file_name.as_str();
+        let jsa_file = self.jruby_home(vec!["lib", jsa_file_name]);
+        self.jruby_jsa_file = if let Some(jsa_env_file) = &env.jruby_jsa_file {
+            Some(PathBuf::from(jsa_env_file.clone()))
+        } else if jsa_file.exists() {
+            Some(jsa_file.clone())
         } else {
+            None
+        };
 
-            if jsa_file.exists() {
-                self.jruby_jsa_file = Some(self.platform_dir.clone().unwrap().join("lib").join(jsa_file.clone()));
-            } else {
-                self.jruby_jsa_file = None;
-            }
-        }
-
+        // FIXME: This writable check does not work and it likely was wrong regardless since it just checked readonly without ownership
         if self.jruby_jsa_file.is_some() {
-            // FIXME: This writable check does not work and it likely was wrong regardless since it just checked readonly without ownership
             /*
             if self.use_jsa_file && fs::metadata(self.jruby_jsa_file.clone().unwrap()).unwrap().permissions().readonly() {
                 println!("Warning: AppCDS archive directory is not writable, disabling AppCDS operations");
@@ -535,14 +530,14 @@ impl LaunchOptions {
                 self.use_jsa_file = false;
             }*/
         } else {
-            self.jruby_jsa_file = Some(self.platform_dir.clone().unwrap().join("lib").join(jsa_file));
+            self.jruby_jsa_file = Some(jsa_file.clone());
         }
 
         if self.use_jsa_file {
             // FIXME: add bare -e1 for no arg regeneration
 
             if self.regenerate_jsa_file {
-                let jruby_jar = PathBuf::from(&platform_dir).join("lib").join("jruby.jar");
+                let jruby_jar = PathBuf::from(&jruby_home).join("lib").join("jruby.jar");
 
                 self.regenerate_jsa_file = is_newer(&jruby_jar, &self.jruby_jsa_file.clone().unwrap());
             }
@@ -556,13 +551,15 @@ impl LaunchOptions {
             }
 
             if self.regenerate_jsa_file && !self.appcds_autogenerate {
-               java_options.push(OsString::from("-XX:ArchiveClassesAtExit=".to_string() + &self.jruby_jsa_file.clone().unwrap().to_str().unwrap()));
+                let jsa_file = self.jruby_jsa_file.clone().unwrap();
+                java_options.push(OsString::from(format!("-XX:ArchiveClassesAtExit={}", jsa_file.display())));
 
                 info!("");
                 info!("Regenerating CDS archive at:");
                 info!("   {:?}", self.jruby_jsa_file.clone().unwrap());
             } else {
-                java_options.push(OsString::from("-XX:SharedArchiveFile=".to_string() + &self.jruby_jsa_file.clone().unwrap().to_str().unwrap()));
+                let jsa_file = &self.jruby_jsa_file.clone().unwrap();
+                java_options.push(OsString::from(format!("-XX:SharedArchiveFile={}", jsa_file.display())));
 
                 if !self.appcds_autogenerate {
                     info!("");
@@ -575,8 +572,9 @@ impl LaunchOptions {
                 info!("Logging CDS output to:");
                 info!("   {:?}", self.jruby_jsa_file.clone().unwrap());
 
-                java_options.push(OsString::from("-Xlog:cds=info:file=".to_string() + &self.jruby_jsa_file.clone().unwrap().to_str().unwrap() + ".log"));
-                java_options.push(OsString::from("-Xlog:cds+dynamic=info:file=".to_string() + &self.jruby_jsa_file.clone().unwrap().to_str().unwrap() + ".log"));
+                let jsa_file = &self.jruby_jsa_file.clone().unwrap();
+                java_options.push(OsString::from(format!("-Xlog:cds=info:file={}", jsa_file.display())));
+                java_options.push(OsString::from(format!("-Xlog:cds+dynamic=info:file={}", jsa_file.display())));
             } else {
                 java_options.push(OsString::from("-Xlog:cds=off"));
                 java_options.push(OsString::from("-Xlog:cds+dynamic=off"));
@@ -608,7 +606,7 @@ impl LaunchOptions {
     }
 
     fn add_jars_to_classpath(&mut self) {
-        let lib_dir = self.platform_dir.clone().unwrap().join("lib");
+        let lib_dir = self.jruby_home.clone().unwrap().join("lib");
 
         if !lib_dir.is_dir() {
             // FIXME: This should full on abort

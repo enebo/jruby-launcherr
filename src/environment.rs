@@ -75,7 +75,9 @@ impl Environment {
             if exist_test(&jruby_bin) {
                 info!("Success: Found bin directory within JRUBY_HOME");
 
-                return Ok(dir);
+                // just assume a last 'jruby' here even though it could be a different suffix or
+                // point to an incomplete jruby installation.
+                return Ok(jruby_bin.join("jruby"));
             } else {
                 info!("Cannot find bin within provided JRUBY_HOME {:?}", &jruby_bin);
             }
@@ -133,6 +135,7 @@ impl Environment {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use crate::environment::Environment;
     use std::path::{MAIN_SEPARATOR, PathBuf};
 
@@ -192,6 +195,17 @@ mod tests {
         let path_test = |t: &PathBuf| t == &test_home;
 
         assert_eq!(env.derive_home_from_argv0(&argv0, &path, path_test).as_os_str(), &absolute);
+    }
+
+    #[test]
+    fn test_jruby_home_env() {
+        let mut env = empty_env();
+        let home: PathBuf = [r"\\frogger\", "home", "user", "jruby"].iter().collect();
+        env.jruby_home = Some(OsString::from(home));
+        let test = |f: &PathBuf| true;
+        let jruby_exe: PathBuf = [r"\\frogger\", "home", "user", "jruby", "bin", "jruby"].iter().collect();
+
+        assert_eq!(env.determine_jruby_executable(test).unwrap(), jruby_exe);
     }
 
     #[test]
